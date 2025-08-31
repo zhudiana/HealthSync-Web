@@ -1,0 +1,85 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* HealthSync Design System - Dark theme with health-focused colors */
+
+@layer base {
+  :root {
+    /* Dark theme base colors */
+    --background: 220 27% 6%;
+    --foreground: 210 40% 98%;
+
+    /* Card and surface colors */
+    --card: 220 27% 8%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 220 27% 8%;
+    --popover-foreground: 210 40% 98%;
+
+    /* Health-focused primary color (vibrant blue) */
+    --primary: 217 91% 60%;
+    --primary-foreground: 220 27% 6%;
+
+    /* Secondary colors for contrast */
+    --secondary: 220 15% 20%;
+    --secondary-foreground: 210 40% 98%;
+
+    /* Muted colors for subtle elements */
+    --muted: 220 15% 15%;
+    --muted-foreground: 220 9% 46%;
+
+    /* Accent health green */
+    --accent: 142 76% 36%;
+    --accent-foreground: 210 40% 98%;
+
+    /* Destructive colors */
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 40% 98%;
+
+    /* Borders and inputs */
+    --border: 220 15% 20%;
+    --input: 220 15% 15%;
+    --ring: 217 91% 60%;
+
+    /* Health-focused gradients */
+    --gradient-primary: linear-gradient(135deg, hsl(217 91% 60%), hsl(142 76% 36%));
+    --gradient-subtle: linear-gradient(180deg, hsl(220 27% 8%), hsl(220 27% 6%));
+    
+    /* Shadows with health theme */
+    --shadow-glow: 0 0 40px hsl(217 91% 60% / 0.2);
+    --shadow-elevated: 0 10px 30px -10px hsl(220 27% 4% / 0.8);
+
+    /* Animation timings */
+    --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+
+    --radius: 0.75rem;
+
+    --sidebar-background: 0 0% 98%;
+
+    --sidebar-foreground: 240 5.3% 26.1%;
+
+    --sidebar-primary: 240 5.9% 10%;
+
+    --sidebar-primary-foreground: 0 0% 98%;
+
+    --sidebar-accent: 240 4.8% 95.9%;
+
+    --sidebar-accent-foreground: 240 5.9% 10%;
+
+    --sidebar-border: 220 13% 91%;
+
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
