@@ -1,8 +1,9 @@
 type Props = {
   onClick: () => void;
   disabled?: boolean;
-  label?: string;
+  label: string; // 👈 make label required so we can specify "Login with Fitbit" or "Login with Withings"
 };
+
 export default function AuthButton({ onClick, disabled, label }: Props) {
   return (
     <button
@@ -10,7 +11,7 @@ export default function AuthButton({ onClick, disabled, label }: Props) {
       disabled={disabled}
       className="w-full max-w-md mx-auto block rounded-xl px-6 py-3 font-medium border border-white/20 hover:border-white/40"
     >
-      {label ?? "Login with Fitbit"}
+      {label}
     </button>
   );
 }

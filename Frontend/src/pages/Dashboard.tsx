@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
-import { fetchProfile, tokenInfo, metricsOverview } from "@/lib/api"; // import
+import { fetchProfile, tokenInfo, metricsOverview } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import Header from "@/components/Header";
 import MetricCard from "@/components/MetricCard";
 
 export default function Dashboard() {
-  const { getAccessToken, profile: ctxProfile } = useAuth();
+  const { getAccessToken, profile: ctxProfile, provider } = useAuth();
   const [profile, setProfile] = useState<any>(ctxProfile);
   const [info, setInfo] = useState<any>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -19,31 +19,52 @@ export default function Dashboard() {
   useEffect(() => {
     (async () => {
       try {
+        if (!provider) {
+          setErr("No provider selected.");
+          return;
+        }
+
         const access = await getAccessToken();
         if (!access) {
           setErr("Not authenticated");
           return;
         }
-        const p = profile ?? (await fetchProfile(access)).user;
+
+        // Provider-aware profile fetch
+        const profResp = await fetchProfile(access, provider);
+        const p = provider === "fitbit" ? profResp?.user : profResp;
         setProfile(p);
 
-        const ov = await metricsOverview(access); // today by default
-        setSteps(ov.steps ?? null);
-        setCalories(ov.caloriesOut ?? null);
-        setRestingHR(ov.restingHeartRate ?? null);
-        setSleepHours(ov.sleepHours ?? null);
-        setWeight(ov.weight ?? null);
+        // Fitbit-only metrics for now
+        if (provider === "fitbit") {
+          const ov = await metricsOverview(access); // today by default
+          setSteps(ov.steps ?? null);
+          setCalories(ov.caloriesOut ?? null);
+          setRestingHR(ov.restingHeartRate ?? null);
+          setSleepHours(ov.sleepHours ?? null);
+          setWeight(ov.weight ?? null);
 
-        try {
-          const i = await tokenInfo(access);
-          setInfo(i);
-        } catch {}
+          try {
+            const i = await tokenInfo(access);
+            setInfo(i);
+          } catch {
+            /* optional */
+          }
+        } else {
+          // Withings path: leave metrics blank for now (we'll wire these next)
+          setSteps(null);
+          setCalories(null);
+          setRestingHR(null);
+          setSleepHours(null);
+          setWeight(null);
+          setInfo(null);
+        }
       } catch (e: any) {
         setErr(e?.message ?? "Failed to load data");
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [provider]); // rerun when provider changes
 
   if (err) {
     return (
@@ -58,8 +79,7 @@ export default function Dashboard() {
     );
   }
 
-  const greetName =
-    profile?.displayName || profile?.fullName?.trim() || "Fitbit User";
+  const greetName = profile?.displayName || profile?.fullName?.trim() || "User";
 
   return (
     <>
@@ -74,6 +94,7 @@ export default function Dashboard() {
           </p>
         </section>
 
+        {/* For now, these show Fitbit metrics only */}
         <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <MetricCard title="Steps" value={steps ?? "—"} sub="today" />
           <MetricCard title="Calories" value={calories ?? "—"} sub="today" />
@@ -81,24 +102,6 @@ export default function Dashboard() {
           <MetricCard title="Sleep" value={sleepHours ?? "—"} sub="hours" />
           <MetricCard title="Weight" value={weight ?? "—"} sub="kg" />
         </section>
-
-        {/* <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div className="rounded-2xl border border-white/10 p-4">
-            <h3 className="text-xl font-semibold mb-2">Profile</h3>
-            <pre className="text-sm overflow-auto">
-              {JSON.stringify(profile, null, 2)}
-            </pre>
-          </div>
-
-          {info && (
-            <div className="rounded-2xl border border-white/10 p-4">
-              <h3 className="text-xl font-semibold mb-2">Token Info</h3>
-              <pre className="text-sm overflow-auto">
-                {JSON.stringify(info, null, 2)}
-              </pre>
-            </div>
-          )}
-        </section> */}
       </main>
     </>
   );

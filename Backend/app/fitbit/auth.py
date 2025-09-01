@@ -83,7 +83,8 @@ def login_fitbit(scope: str = "activity heartrate location nutrition profile set
             "code_challenge_method": "S256",
             "scope": scope,
             "state": pkce_values.state,
-            "redirect_uri": FITBIT_REDIRECT_URI
+            "redirect_uri": FITBIT_REDIRECT_URI,
+            "prompt": "consent"
         }
         
         auth_url = f"{FITBIT_AUTHORIZE_URL}?{urllib.parse.urlencode(auth_params)}"
@@ -91,6 +92,7 @@ def login_fitbit(scope: str = "activity heartrate location nutrition profile set
         return {
             "authorization_url": auth_url,
             "state": pkce_values.state,
+            "redirect_uri": FITBIT_REDIRECT_URI,
             "message": "Visit the authorization_url to authorize the application"
         }
         

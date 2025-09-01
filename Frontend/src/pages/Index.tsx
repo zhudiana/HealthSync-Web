@@ -1,36 +1,51 @@
 import heroImage from "@/assets/healthsync-hero.jpg";
 import AuthButton from "@/components/AuthButton";
-import { useState } from "react";
-import { getFitbitAuthUrl } from "@/lib/api";
-import { tokens } from "@/lib/storage";
+import { useEffect, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { useNavigate } from "react-router-dom";
 
 export default function Index() {
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState<"fitbit" | "withings" | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const auth = useAuth();
   const navigate = useNavigate();
 
-  // Inject loginStart into context for other components if needed
-  auth.loginStart = async (
-    scope = "activity heartrate profile sleep weight"
-  ) => {
-    setErr(null);
-    setLoading(true);
-    try {
-      const { authorization_url, state } = await getFitbitAuthUrl(scope);
-      tokens.setState(state);
-      window.location.href = authorization_url;
-    } catch (e: any) {
-      setErr(e?.message ?? "Failed to start OAuth");
-    } finally {
-      setLoading(false);
+  // if (auth.isAuthenticated) {
+  //   navigate("/dashboard");
+  // }
+  useEffect(() => {
+    if (auth.isAuthenticated) {
+      navigate("/dashboard");
     }
-  };
+  }, [auth.isAuthenticated, navigate]);
 
-  if (auth.isAuthenticated) {
-    navigate("/dashboard");
+  async function startFitbit() {
+    setErr(null);
+    setLoading("fitbit");
+    try {
+      // Default Fitbit scopes
+      await auth.loginStart(
+        "fitbit",
+        "activity heartrate profile sleep weight"
+      );
+      // Redirect happens inside loginStart
+    } catch (e: any) {
+      setErr(e?.message ?? "Failed to start Fitbit OAuth");
+      setLoading(null);
+    }
+  }
+
+  async function startWithings() {
+    setErr(null);
+    setLoading("withings");
+    try {
+      // Default Withings scopes
+      await auth.loginStart("withings", "user.info,user.metrics");
+      // Redirect happens inside loginStart
+    } catch (e: any) {
+      setErr(e?.message ?? "Failed to start Withings OAuth");
+      setLoading(null);
+    }
   }
 
   return (
@@ -45,7 +60,7 @@ export default function Index() {
           Health<span className="text-primary">Sync</span>
         </h1>
         <p className="text-xl md:text-2xl text-muted-foreground mb-12 leading-relaxed">
-          Connect your Fitbit to view your health metrics in a personal
+          Connect your device to view your health metrics in a personal
           dashboard.
         </p>
 
@@ -55,11 +70,26 @@ export default function Index() {
           </div>
         )}
 
-        <AuthButton
-          onClick={() => auth.loginStart()}
-          disabled={loading}
-          label={loading ? "Connecting..." : "Login with Fitbit"}
-        />
+        <div className="flex flex-col gap-4 max-w-md mx-auto">
+          <AuthButton
+            onClick={startFitbit}
+            disabled={!!loading}
+            label={
+              loading === "fitbit"
+                ? "Connecting to Fitbit..."
+                : "Login with Fitbit"
+            }
+          />
+          <AuthButton
+            onClick={startWithings}
+            disabled={!!loading}
+            label={
+              loading === "withings"
+                ? "Connecting to Withings..."
+                : "Login with Withings"
+            }
+          />
+        </div>
 
         <p className="text-sm text-muted-foreground mt-12 opacity-70">
           Secure OAuth • Your data stays private

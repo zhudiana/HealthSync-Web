@@ -1,7 +1,12 @@
 import { createContext, useContext, useEffect, useState } from "react";
-import { tokens, providerStorage } from "@/lib/storage";
-import { fetchProfile, refreshToken, revoke } from "@/lib/api";
-import { getFitbitAuthUrl, getWithingsAuthUrl } from "@/lib/oauth"; // 👈 add this
+import { tokens } from "@/lib/storage";
+import {
+  fetchProfile,
+  refreshToken,
+  revoke,
+  getFitbitAuthUrl,
+  getWithingsAuthUrl,
+} from "@/lib/api";
 
 type Profile = any;
 type Provider = "fitbit" | "withings" | null;
@@ -36,21 +41,28 @@ export function useAuth() {
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(false);
-  const [provider, setProvider] = useState<Provider>(providerStorage.get());
+  const [provider, setProvider] = useState<Provider>(
+    tokens.getActiveProvider()
+  );
   const [isAuthenticated, setAuth] = useState(
-    (!!tokens.getAccess() || !!tokens.getRefresh()) && !!provider
+    !!provider &&
+      (!!tokens.getAccess(provider) || !!tokens.getRefresh(provider))
   );
 
   async function getAccessToken(): Promise<string | null> {
-    const access = tokens.getAccess();
+    if (!provider) return null;
+
+    const access = tokens.getAccess(provider);
     if (access) return access;
-    const refresh = tokens.getRefresh();
+
+    const refresh = tokens.getRefresh(provider);
     if (!refresh) return null;
 
     try {
+      // Your API should accept the provider to hit the right backend route
       const r = await refreshToken(refresh, provider);
-      tokens.setAccess(r.access_token);
-      if (r.refresh_token) tokens.setRefresh(r.refresh_token);
+      tokens.setAccess(provider, r.access_token);
+      if (r.refresh_token) tokens.setRefresh(provider, r.refresh_token);
       return r.access_token as string;
     } catch {
       return null;
@@ -59,17 +71,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   async function loadProfile() {
     if (!provider) return;
+
     const access = await getAccessToken();
     if (!access) {
       setAuth(false);
       setProfile(null);
       return;
     }
+
     try {
       const data = await fetchProfile(access, provider);
       setProfile(data?.user ?? null);
       setAuth(true);
     } catch {
+      // If 401, try refresh once
       const refreshed = await getAccessToken();
       if (!refreshed) {
         setAuth(false);
@@ -88,18 +103,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   useEffect(() => {
-    if ((tokens.getAccess() || tokens.getRefresh()) && provider) loadProfile();
+    if (
+      provider &&
+      (tokens.getAccess(provider) || tokens.getRefresh(provider))
+    ) {
+      loadProfile();
+    }
   }, [provider]);
 
   async function logout() {
     try {
-      const access = tokens.getAccess();
-      if (access && provider) await revoke(access, provider);
+      if (provider) {
+        const access = tokens.getAccess(provider);
+        if (access) await revoke(access, provider);
+      }
     } catch {
       // ignore
     } finally {
-      tokens.clearAll();
-      providerStorage.clear();
+      if (provider) {
+        tokens.clearAll(provider);
+      }
+      tokens.clearActiveProvider();
       setAuth(false);
       setProvider(null);
       setProfile(null);
@@ -112,20 +136,85 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   ) {
     setLoading(true);
     try {
-      providerStorage.set(nextProvider);
+      // one-at-a-time: clear the other provider
+      const other: Exclude<Provider, null> =
+        nextProvider === "fitbit" ? "withings" : "fitbit";
+      tokens.clearAll(other);
+
+      tokens.setActiveProvider(nextProvider);
       setProvider(nextProvider);
 
-      // 👉 Redirect depending on provider
       if (nextProvider === "fitbit") {
-        const { authorization_url, state } = await getFitbitAuthUrl(scope);
-        tokens.setState(state);
-        window.location.href = authorization_url;
-      } else if (nextProvider === "withings") {
-        const { authorization_url, state } = await getWithingsAuthUrl(scope);
-        tokens.setState(state);
-        window.location.href = authorization_url;
+        console.log("[OAuth] Fitbit → requesting auth URL…", { scope });
+        const res = await getFitbitAuthUrl(
+          scope ?? "activity heartrate profile sleep weight"
+        );
+        console.log("[OAuth] Fitbit → response from /fitbit/login:", res);
+
+        const url = res?.authorization_url;
+        const st = res?.state;
+        if (!url) throw new Error("Fitbit: missing authorization_url");
+
+        try {
+          // tokens.setState(nextProvider, st ?? "");
+        } catch (err) {
+          console.error(
+            "[OAuth] Fitbit → tokens.setState failed, continuing to redirect:",
+            err
+          );
+        }
+
+        // Try multiple navigation strategies to avoid any browser quirk
+        try {
+          console.log("[OAuth] Fitbit → redirecting via location.assign", url);
+          window.location.assign(url);
+          return;
+        } catch (e1) {
+          console.warn("[OAuth] assign failed, trying href", e1);
+        }
+        try {
+          console.log("[OAuth] Fitbit → redirecting via location.href", url);
+          window.location.href = url;
+          return;
+        } catch (e2) {
+          console.warn("[OAuth] href failed, creating anchor fallback", e2);
+        }
+
+        // Final fallback: synthetic click
+        const a = document.createElement("a");
+        a.href = url;
+        a.rel = "noreferrer";
+        document.body.appendChild(a);
+        a.click();
+        return;
+
+        // prevent finally from toggling loading back too soon
+      } else {
+        console.log("[OAuth] Withings → requesting auth URL…", { scope });
+        const res = await getWithingsAuthUrl(scope ?? "user.info,user.metrics");
+        console.log("[OAuth] Withings → response from /withings/login:", res);
+        if (
+          !res ||
+          typeof res.authorization_url !== "string" ||
+          !res.authorization_url
+        ) {
+          throw new Error("Withings: missing authorization_url");
+        }
+        if (!res.state) {
+          console.warn(
+            "[OAuth] Withings → missing state; continuing but this may break callback"
+          );
+        }
+        tokens.setState(nextProvider, res.state ?? "");
+        console.log("[OAuth] Withings → redirecting to", res.authorization_url);
+        window.location.href = res.authorization_url; // hard navigation
+        return;
       }
+    } catch (e) {
+      console.error("[OAuth] loginStart error:", e);
+      throw e; // let caller show error if needed
     } finally {
+      // This runs only if we didn't hard-navigate
       setLoading(false);
     }
   }

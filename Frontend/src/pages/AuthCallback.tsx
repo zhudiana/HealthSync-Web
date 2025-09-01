@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { tokens } from "@/lib/storage";
+import { exchangeCode } from "@/lib/api"; // calls GET /fitbit/callback?code=...&state=...
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL as string; // e.g. http://localhost:8000
+type Provider = "fitbit" | "withings";
 
 export default function AuthCallback() {
-  const [msg, setMsg] = useState("Finishing sign-in...");
+  const [msg, setMsg] = useState("Finishing sign-in…");
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -13,60 +15,43 @@ export default function AuthCallback() {
         const url = new URL(window.location.href);
         const code = url.searchParams.get("code");
         const state = url.searchParams.get("state");
+        // If you pass provider in the redirect back to SPA, read it; otherwise default to fitbit for now
+        const provider =
+          (url.searchParams.get("provider") as Provider) || "fitbit";
 
         if (!code) {
           setMsg("Missing authorization code.");
           return;
         }
-
-        const expectedState = sessionStorage.getItem("oauth_state");
-        if (!state || !expectedState || state !== expectedState) {
-          setMsg("Invalid state. Please start the sign-in again.");
-          return;
-        }
-        sessionStorage.removeItem("oauth_state");
-
-        const verifier = sessionStorage.getItem("fitbit_code_verifier");
-        if (!verifier) {
-          setMsg("Missing PKCE verifier. Please start the sign-in again.");
+        if (!state) {
+          setMsg("Missing state parameter.");
           return;
         }
 
-        const controller = new AbortController();
-        const id = setTimeout(() => controller.abort(), 15000); // 15s timeout
+        // Exchange the code on the backend (backend has the PKCE verifier stored from /fitbit/login)
+        const data = await exchangeCode(code, state); // expects Fitbit for now
+        // shape: { message, tokens: { access_token, refresh_token, user_id, ... }, user_id }
 
-        const res = await fetch(`${API_BASE}/fitbit/token`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ code, code_verifier: verifier, state }),
-          signal: controller.signal,
-        }).catch((e) => {
-          throw new Error(
-            e?.name === "AbortError"
-              ? "Request timed out."
-              : e?.message || "Network error."
-          );
-        });
-        clearTimeout(id);
+        const access = data?.tokens?.access_token;
+        const refresh = data?.tokens?.refresh_token;
+        const userId = data?.tokens?.user_id || data?.user_id;
 
-        const data = await res.json().catch(() => ({}));
-
-        if (!res.ok) {
-          // Backend forwards Fitbit error details in `detail`
-          const reason =
-            (data?.detail && JSON.stringify(data.detail)) ||
-            data?.error_description ||
-            data?.error ||
-            res.statusText ||
-            "OAuth failed.";
-          throw new Error(reason);
+        if (!access) {
+          throw new Error("No access token returned from server.");
         }
 
-        // Clear PKCE verifier after successful exchange
-        sessionStorage.removeItem("fitbit_code_verifier");
-        setMsg("Fitbit connected! Redirecting to your dashboard...");
+        // Persist active provider and tokens (one-at-a-time model)
+        tokens.setActiveProvider(provider);
+        tokens.setAccess(provider, access);
+        if (refresh) tokens.setRefresh(provider, refresh);
+        if (userId) tokens.setUserId(provider, userId);
+
+        setMsg("Connected! Redirecting to your dashboard…");
         // Small delay for UX, then navigate
-        setTimeout(() => navigate("/dashboard"), 800);
+        // setTimeout(() => navigate("/dashboard"), 400);
+        setTimeout(() => {
+          window.location.replace("/dashboard");
+        }, 150);
       } catch (err: any) {
         setMsg(`OAuth failed: ${err?.message || "Unknown error"}`);
       }

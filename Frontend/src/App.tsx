@@ -3,6 +3,7 @@ import { AuthProvider, useAuth } from "@/context/AuthContext";
 import Index from "@/pages/Index";
 import Callback from "@/pages/Callback";
 import Dashboard from "@/pages/Dashboard";
+import AuthCallback from "./pages/AuthCallback";
 
 function Protected({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuth();
@@ -16,7 +17,7 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Index />} />
-          <Route path="/fitbit/callback" element={<Callback />} />
+          <Route path="/auth/callback" element={<AuthCallback />} />
           <Route
             path="/dashboard"
             element={

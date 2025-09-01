@@ -1,5 +1,8 @@
 const API_BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
+type Provider = "fitbit" | "withings";
+
+// ---------- Fitbit ----------
 export async function getFitbitAuthUrl(scope: string) {
   const res = await fetch(
     `${API_BASE_URL}/fitbit/login?scope=${encodeURIComponent(scope)}`
@@ -18,19 +21,30 @@ export async function exchangeCode(code: string, state: string) {
   return data;
 }
 
-export async function fetchProfile(accessToken: string) {
-  const res = await fetch(
-    `${API_BASE_URL}/fitbit/user-profile?access_token=${encodeURIComponent(
-      accessToken
-    )}`
-  );
+// ---------- Shared helpers (provider aware) ----------
+export async function fetchProfile(accessToken: string, provider: Provider) {
+  const url =
+    provider === "fitbit"
+      ? `${API_BASE_URL}/fitbit/user-profile?access_token=${encodeURIComponent(
+          accessToken
+        )}`
+      : `${API_BASE_URL}/withings/profile?access_token=${encodeURIComponent(
+          accessToken
+        )}`;
+
+  const res = await fetch(url);
   const data = await res.json();
   if (!res.ok) throw new Error(data?.detail || "profile failed");
   return data;
 }
 
-export async function refreshToken(refreshToken: string) {
-  const res = await fetch(`${API_BASE_URL}/fitbit/refresh`, {
+export async function refreshToken(refreshToken: string, provider: Provider) {
+  const url =
+    provider === "fitbit"
+      ? `${API_BASE_URL}/fitbit/refresh`
+      : `${API_BASE_URL}/withings/refresh`;
+
+  const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ refresh_token: refreshToken }),
@@ -40,17 +54,23 @@ export async function refreshToken(refreshToken: string) {
   return data;
 }
 
-export async function revoke(accessToken: string) {
-  const res = await fetch(
-    `${API_BASE_URL}/fitbit/revoke?access_token=${encodeURIComponent(
-      accessToken
-    )}`
-  );
+export async function revoke(accessToken: string, provider: Provider) {
+  const url =
+    provider === "fitbit"
+      ? `${API_BASE_URL}/fitbit/revoke?access_token=${encodeURIComponent(
+          accessToken
+        )}`
+      : `${API_BASE_URL}/withings/revoke?access_token=${encodeURIComponent(
+          accessToken
+        )}`;
+
+  const res = await fetch(url);
   const data = await res.json();
   if (!res.ok) throw new Error(data?.detail || "revoke failed");
   return data;
 }
 
+// ---------- Fitbit extras ----------
 export async function tokenInfo(accessToken: string) {
   const res = await fetch(
     `${API_BASE_URL}/fitbit/token-info?access_token=${encodeURIComponent(
@@ -61,8 +81,6 @@ export async function tokenInfo(accessToken: string) {
   if (!res.ok) throw new Error(data?.detail || "token info failed");
   return data;
 }
-
-// ########################################
 
 export async function metricsOverview(accessToken: string, date?: string) {
   const url = new URL(`${API_BASE_URL}/fitbit/metrics/overview`);
@@ -81,7 +99,6 @@ export async function metricsOverview(accessToken: string, date?: string) {
   };
 }
 
-// If you want the individual ones too:
 export const metrics = {
   summary: async (token: string, date?: string) => {
     const u = new URL(`${API_BASE_URL}/fitbit/metrics/summary`);
@@ -121,20 +138,11 @@ export const metrics = {
   },
 };
 
-// #################### Withings ######################
-
+// ---------- Withings ----------
 export async function getWithingsAuthUrl(scope: string) {
   const res = await fetch(
-    `/api/withings/authorize?scope=${encodeURIComponent(scope)}`
+    `${API_BASE_URL}/withings/login?scope=${encodeURIComponent(scope)}`
   );
   if (!res.ok) throw new Error("Failed to get Withings auth URL");
-  return res.json();
-}
-
-export async function fetchWithingsProfile(accessToken: string) {
-  const res = await fetch("/api/withings/profile", {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  if (!res.ok) throw new Error("Failed to fetch Withings profile");
   return res.json();
 }

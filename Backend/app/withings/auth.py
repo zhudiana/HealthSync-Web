@@ -357,4 +357,37 @@ def test_measures(access_token: str):
     return {"raw": data, "parsed": parsed}
 
 
+########################
+# ADD: exchange endpoint so SPA can trade code -> tokens
+from fastapi import Body
 
+@router.post("/withings/exchange")
+def withings_exchange(payload: Dict[str, str] = Body(...)):
+    """
+    SPA calls this after being redirected to /auth/callback with ?code&state.
+    We validate `state` that we created in /withings/login, then exchange code.
+    """
+    code = payload.get("code")
+    state = payload.get("state")
+
+    if not code or not state:
+        raise HTTPException(status_code=400, detail="Missing code or state")
+
+    # load latest sessions from file (same as in /withings/callback)
+    global withings_sessions
+    withings_sessions = load_sessions()
+
+    if state not in withings_sessions:
+        raise HTTPException(status_code=400, detail="Invalid or expired state parameter")
+
+    # do the token exchange (you already implemented this)
+    tokens = exchange_code_for_tokens(code)
+
+    # clean up this state so it can't be reused
+    try:
+        del withings_sessions[state]
+        save_sessions(withings_sessions)
+    except Exception:
+        pass
+
+    return {"tokens": tokens}
