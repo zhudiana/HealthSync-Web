@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
-import { fetchProfile, tokenInfo, metricsOverview } from "@/lib/api";
+import {
+  fetchProfile,
+  tokenInfo,
+  metricsOverview,
+  withingsMetricsOverview,
+  withingsMetricsDaily,
+} from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import Header from "@/components/Header";
 import MetricCard from "@/components/MetricCard";
@@ -16,6 +22,15 @@ export default function Dashboard() {
   const [weight, setWeight] = useState<number | null>(null);
   const [calories, setCalories] = useState<number | null>(null);
 
+  // NEW states
+  const [vo2max, setVo2max] = useState<number | null>(null); // NEW
+  const [spo2, setSpo2] = useState<number | null>(null); // NEW
+  const [hrv, setHrv] = useState<number | null>(null); // NEW
+  const [respRate, setRespRate] = useState<number | null>(null); // NEW
+  const [tempVar, setTempVar] = useState<number | null>(null); // NEW
+  const [azm, setAzm] = useState<number | null>(null); // NEW
+  const [distance, setDistance] = useState<number | null>(null);
+
   useEffect(() => {
     (async () => {
       try {
@@ -30,41 +45,68 @@ export default function Dashboard() {
           return;
         }
 
-        // Provider-aware profile fetch
-        const profResp = await fetchProfile(access, provider);
-        const p = provider === "fitbit" ? profResp?.user : profResp;
-        setProfile(p);
+        // --- Load profile (provider-aware) ---
+        try {
+          const profResp = await fetchProfile(access, provider);
+          const p = provider === "fitbit" ? profResp?.user : profResp;
+          setProfile(
+            p ?? {
+              fullName: provider === "withings" ? "Withings User" : "User",
+            }
+          );
+        } catch {
+          // For Withings, don't fail hard if profile endpoint errors; use placeholder
+          if (provider === "withings") {
+            setProfile({ fullName: "Withings User" });
+          } else {
+            throw new Error("Failed to load profile");
+          }
+        }
 
-        // Fitbit-only metrics for now
+        // --- Metrics ---
         if (provider === "fitbit") {
-          const ov = await metricsOverview(access); // today by default
+          const ov = await metricsOverview(access); // Fitbit-only
           setSteps(ov.steps ?? null);
           setCalories(ov.caloriesOut ?? null);
           setRestingHR(ov.restingHeartRate ?? null);
           setSleepHours(ov.sleepHours ?? null);
           setWeight(ov.weight ?? null);
+          setDistance(ov.total_km ?? null);
 
           try {
-            const i = await tokenInfo(access);
+            const i = await tokenInfo(access); // Fitbit-only
             setInfo(i);
-          } catch {
-            /* optional */
-          }
+          } catch {}
         } else {
-          // Withings path: leave metrics blank for now (we'll wire these next)
-          setSteps(null);
-          setCalories(null);
-          setRestingHR(null);
-          setSleepHours(null);
-          setWeight(null);
+          try {
+            const [w, d] = await Promise.all([
+              withingsMetricsOverview(access),
+              withingsMetricsDaily(access),
+            ]);
+
+            setWeight(w.weightKg ?? null);
+            setRestingHR(w.restingHeartRate ?? null);
+
+            setSteps(d.steps ?? null);
+            setCalories(d.calories ?? null);
+            setSleepHours(d.sleepHours ?? null);
+          } catch (e) {
+            // keep placeholders if it fails
+            setWeight(null);
+            setRestingHR(null);
+            setSteps(null);
+            setCalories(null);
+            setSleepHours(null);
+          }
+
           setInfo(null);
         }
       } catch (e: any) {
         setErr(e?.message ?? "Failed to load data");
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [provider]); // rerun when provider changes
+    // re-run when provider changes
+  }, [provider, getAccessToken]);
 
   if (err) {
     return (
@@ -79,7 +121,11 @@ export default function Dashboard() {
     );
   }
 
-  const greetName = profile?.displayName || profile?.fullName?.trim() || "User";
+  const greetName =
+    profile?.displayName ||
+    profile?.fullName?.trim() ||
+    [profile?.firstName, profile?.lastName].filter(Boolean).join(" ") ||
+    "User";
 
   return (
     <>
@@ -94,13 +140,30 @@ export default function Dashboard() {
           </p>
         </section>
 
-        {/* For now, these show Fitbit metrics only */}
+        {/* Fitbit metrics only for now; Withings shows placeholders */}
         <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <MetricCard title="Steps" value={steps ?? "—"} sub="today" />
           <MetricCard title="Calories" value={calories ?? "—"} sub="today" />
-          <MetricCard title="Resting HR" value={restingHR ?? "—"} sub="bpm" />
+          <MetricCard
+            title="Resting Heart Rate (RHR)"
+            value={restingHR ?? "—"}
+            sub="bpm"
+          />
           <MetricCard title="Sleep" value={sleepHours ?? "—"} sub="hours" />
           <MetricCard title="Weight" value={weight ?? "—"} sub="kg" />
+
+          {/* NEW extras */}
+          <MetricCard title="VO₂ Max" value={vo2max ?? "—"} sub="ml/kg/min" />
+          <MetricCard title="Blood Oxygen (SpO₂)" value={spo2 ?? "—"} sub="%" />
+          <MetricCard
+            title="Heart Rate Variability (HRV)"
+            value={hrv ?? "—"}
+            sub="ms"
+          />
+          <MetricCard title="Resp. Rate" value={respRate ?? "—"} sub="bpm" />
+          <MetricCard title="Skin Temp" value={tempVar ?? "—"} sub="Δ °C" />
+          <MetricCard title="AZM" value={azm ?? "—"} sub="min" />
+          <MetricCard title="Distance" value={distance ?? "—"} sub="km" />
         </section>
       </main>
     </>

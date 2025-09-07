@@ -21,21 +21,29 @@ export async function exchangeCode(code: string, state: string) {
   return data;
 }
 
-// ---------- Shared helpers (provider aware) ----------
-export async function fetchProfile(accessToken: string, provider: Provider) {
-  const url =
-    provider === "fitbit"
-      ? `${API_BASE_URL}/fitbit/user-profile?access_token=${encodeURIComponent(
-          accessToken
-        )}`
-      : `${API_BASE_URL}/withings/profile?access_token=${encodeURIComponent(
-          accessToken
-        )}`;
-
-  const res = await fetch(url);
-  const data = await res.json();
-  if (!res.ok) throw new Error(data?.detail || "profile failed");
-  return data;
+export async function fetchProfile(
+  accessToken: string,
+  provider: "fitbit" | "withings"
+) {
+  if (provider === "fitbit") {
+    const res = await fetch(
+      `${API_BASE_URL}/fitbit/user-profile?access_token=${encodeURIComponent(
+        accessToken
+      )}`
+    );
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.detail || "fitbit profile failed");
+    return data; // { user: {...} }
+  } else {
+    const res = await fetch(
+      `${API_BASE_URL}/withings/profile?access_token=${encodeURIComponent(
+        accessToken
+      )}`
+    );
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.detail || "withings profile failed");
+    return data; // { firstName, lastName, fullName }
+  }
 }
 
 export async function refreshToken(refreshToken: string, provider: Provider) {
@@ -96,6 +104,7 @@ export async function metricsOverview(accessToken: string, date?: string) {
     restingHeartRate?: number;
     sleepHours?: number;
     weight?: number;
+    total_km?: number;
   };
 }
 
@@ -136,6 +145,120 @@ export const metrics = {
     if (!r.ok) throw new Error(d?.detail || "weight failed");
     return d;
   },
+
+  // ---------- NEW: added Fitbit metrics ----------
+  vo2max: async (token: string, start: string, end: string) => {
+    const u = new URL(`${API_BASE_URL}/fitbit/metrics/vo2max`);
+    u.searchParams.set("access_token", token);
+    u.searchParams.set("start", start);
+    u.searchParams.set("end", end);
+    const r = await fetch(u.toString());
+    const d = await r.json();
+    if (!r.ok) throw new Error(d?.detail || "vo2max failed");
+    return d as {
+      start: string;
+      end: string;
+      items: { date: string; vo2max_ml_kg_min: number | null }[];
+      raw?: unknown;
+    };
+  },
+
+  spo2Nightly: async (token: string, date?: string) => {
+    const u = new URL(`${API_BASE_URL}/fitbit/metrics/spo2-nightly`);
+    u.searchParams.set("access_token", token);
+    if (date) u.searchParams.set("date", date);
+    const r = await fetch(u.toString());
+    const d = await r.json();
+    if (!r.ok) throw new Error(d?.detail || "spo2 failed");
+    return d as {
+      date: string;
+      average: number | null;
+      min: number | null;
+      max: number | null;
+      raw?: unknown;
+    };
+  },
+
+  hrv: async (token: string, start: string, end: string) => {
+    const u = new URL(`${API_BASE_URL}/fitbit/metrics/hrv`);
+    u.searchParams.set("access_token", token);
+    u.searchParams.set("start", start);
+    u.searchParams.set("end", end);
+    const r = await fetch(u.toString());
+    const d = await r.json();
+    if (!r.ok) throw new Error(d?.detail || "hrv failed");
+    return d as {
+      start: string;
+      end: string;
+      items: { date: string; rmssd_ms: number | null }[];
+      raw?: unknown;
+    };
+  },
+
+  respiratoryRate: async (token: string, start: string, end: string) => {
+    const u = new URL(`${API_BASE_URL}/fitbit/metrics/respiratory-rate`);
+    u.searchParams.set("access_token", token);
+    u.searchParams.set("start", start);
+    u.searchParams.set("end", end);
+    const r = await fetch(u.toString());
+    const d = await r.json();
+    if (!r.ok) throw new Error(d?.detail || "respiratory-rate failed");
+    return d as {
+      start: string;
+      end: string;
+      items: { date: string; breaths_per_min: number | null }[];
+      raw?: unknown;
+    };
+  },
+
+  temperature: async (token: string, start: string, end: string) => {
+    const u = new URL(`${API_BASE_URL}/fitbit/metrics/temperature`);
+    u.searchParams.set("access_token", token);
+    u.searchParams.set("start", start);
+    u.searchParams.set("end", end);
+    const r = await fetch(u.toString());
+    const d = await r.json();
+    if (!r.ok) throw new Error(d?.detail || "temperature failed");
+    return d as {
+      start: string;
+      end: string;
+      items: { date: string; delta_c: number | null }[];
+      raw?: unknown;
+    };
+  },
+
+  azm: async (token: string, start: string, end: string) => {
+    const u = new URL(`${API_BASE_URL}/fitbit/metrics/azm`);
+    u.searchParams.set("access_token", token);
+    u.searchParams.set("start", start);
+    u.searchParams.set("end", end);
+    const r = await fetch(u.toString());
+    const d = await r.json();
+    if (!r.ok) throw new Error(d?.detail || "azm failed");
+    return d as {
+      start: string;
+      end: string;
+      items: { date: string; minutes: number | null }[];
+      raw?: unknown;
+    };
+  },
+
+  distance: async (token: string, date?: string) => {
+    // NEW
+    const u = new URL(`${API_BASE_URL}/fitbit/metrics/distance`); // NEW
+    u.searchParams.set("access_token", token); // NEW
+    if (date) u.searchParams.set("date", date); // NEW
+    const r = await fetch(u.toString()); // NEW
+    const d = await r.json(); // NEW
+    if (!r.ok) throw new Error(d?.detail || "distance failed"); // NEW
+    return d as {
+      // NEW
+      date: string; // NEW
+      total_km: number | null; // NEW
+      distances: { activity: string; distance: number }[]; // NEW
+      raw?: unknown; // NEW
+    }; // NEW
+  },
 };
 
 // ---------- Withings ----------
@@ -145,4 +268,41 @@ export async function getWithingsAuthUrl(scope: string) {
   );
   if (!res.ok) throw new Error("Failed to get Withings auth URL");
   return res.json();
+}
+
+export async function exchangeWithingsCode(code: string, state: string) {
+  const res = await fetch(`${API_BASE_URL}/withings/exchange`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code, state }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "withings exchange failed");
+  return data; // { tokens: {...} }
+}
+
+export async function withingsMetricsOverview(accessToken: string) {
+  const url = new URL(`${API_BASE_URL}/withings/metrics/overview`);
+  url.searchParams.set("access_token", accessToken);
+  const res = await fetch(url.toString());
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "withings metrics failed");
+  // { weightKg: number|null, restingHeartRate: number|null }
+  return data as { weightKg: number | null; restingHeartRate: number | null };
+}
+
+export async function withingsMetricsDaily(accessToken: string, date?: string) {
+  const url = new URL(`${API_BASE_URL}/withings/metrics/daily`);
+  url.searchParams.set("access_token", accessToken);
+  if (date) url.searchParams.set("date", date);
+  const res = await fetch(url.toString());
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "withings daily metrics failed");
+  // { date, steps, calories, sleepHours }
+  return data as {
+    date: string;
+    steps: number | null;
+    calories: number | null;
+    sleepHours: number | null;
+  };
 }

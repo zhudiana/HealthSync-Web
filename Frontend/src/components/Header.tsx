@@ -3,12 +3,25 @@ import { useState, useRef, useEffect } from "react";
 import { useAuth } from "@/context/AuthContext";
 
 export default function Header() {
-  const { profile, logout } = useAuth();
-  const name =
-    profile?.displayName || profile?.fullName?.trim() || "Fitbit User";
+  const { profile, logout, provider } = useAuth();
+  let name: string;
+  if (provider === "withings") {
+    const full =
+      profile?.fullName?.trim() ||
+      [profile?.firstName, profile?.lastName].filter(Boolean).join(" ");
+    if (full) {
+      name = full;
+    } else if (profile?.id) {
+      name = `W-${String(profile.id).slice(0, 6)}`;
+    } else {
+      name = "Withings User"; // ultimate fallback
+    }
+  } else {
+    // Fitbit (default)
+    name = profile?.displayName || profile?.fullName?.trim() || "Fitbit User";
+  }
   const avatar =
-    profile?.avatar150 ||
-    profile?.avatar ||
+    (provider === "fitbit" ? profile?.avatar150 || profile?.avatar : null) ||
     "https://static0.fitbit.com/images/profile/defaultProfile_150.png";
 
   const [open, setOpen] = useState(false);

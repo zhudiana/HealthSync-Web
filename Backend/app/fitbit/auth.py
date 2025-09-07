@@ -7,6 +7,8 @@ import secrets
 import urllib.parse
 from typing import Optional, Dict, Any
 from app.config import FITBIT_CLIENT_ID, FITBIT_CLIENT_SECRET, FITBIT_REDIRECT_URI
+from datetime import datetime, timedelta
+from fastapi import Query
 
 router = APIRouter(prefix="/fitbit", tags=["Fitbit Auth"])
 
