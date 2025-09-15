@@ -1,3 +1,4 @@
+from fastapi import Body
 from fastapi import APIRouter, HTTPException, status
 import requests
 import secrets
@@ -7,7 +8,7 @@ from app.config import WITHINGS_CLIENT_ID, WITHINGS_REDIRECT_URI, WITHINGS_CLIEN
 import time
 import json
 import os
-from app.withings.utils.withings_parser import parse_withings_measure_group
+
 
 router = APIRouter()
 
@@ -41,7 +42,7 @@ def save_sessions(sessions):
 withings_sessions = load_sessions()
 
 @router.get("/withings/login")
-def login_withings(scope: str = "user.metrics,user.activity"):
+def login_withings(scope: str = "user.info,user.metrics,user.activity,user.sleepevents"):
     """Generate authorization URL for Withings OAuth 2.0"""
     try:
         # Generate secure state parameter
@@ -159,6 +160,7 @@ def withings_callback(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error processing callback: {str(e)}"
         )
+
 
 def exchange_code_for_tokens(auth_code: str) -> Dict[str, Any]:
     """
@@ -357,33 +359,8 @@ def withings_profile(access_token: str):
         # Network error → still return placeholder
         return {"id": None, "firstName": None, "lastName": None, "fullName": "Withings User"}
 
-
-
-@router.get("/withings/test-measures")
-def test_measures(access_token: str):
-    params = {"action": "getmeas"}
-    headers = {"Authorization": f"Bearer {access_token}"}
-
-    response = requests.post(
-        "https://wbsapi.withings.net/measure",
-        data=params,
-        headers=headers,
-        timeout=30
-    )
-
-    if response.status_code != 200:
-        return {"error": response.text}
-
-    data = response.json()
-    measuregrps = data.get("body", {}).get("measuregrps", [])
-    parsed = parse_withings_measure_group(measuregrps)
-
-    return {"raw": data, "parsed": parsed}
-
-
 ########################
 # ADD: exchange endpoint so SPA can trade code -> tokens
-from fastapi import Body
 
 @router.post("/withings/exchange")
 def withings_exchange(payload: Dict[str, str] = Body(...)):
@@ -417,179 +394,5 @@ def withings_exchange(payload: Dict[str, str] = Body(...)):
     return {"tokens": tokens}
 
 
-
-# --- Withings metrics: simple overview (weight + resting HR) ---
-@router.get("/withings/metrics/overview")
-def withings_metrics_overview(access_token: str):
-    """
-    Returns a minimal metrics snapshot from Withings:
-      - weightKg: latest body weight (kg)
-      - restingHeartRate: latest HR sample (bpm)
-    Notes:
-      * Uses /measure?action=getmeas
-      * Steps/sleep/calories use different endpoints; we’ll wire them later.
-    """
-    try:
-        headers = {"Authorization": f"Bearer {access_token}"}
-        # Withings measure types:
-        #   1 = weight (kg, unit=-3 means value * 10^-3)
-        #   11 = heart rate (bpm, unit=0)
-        # We can request multiple meastypes at once (comma-separated).
-        data = {
-            "action": "getmeas",
-            "meastype": "1,11",
-            "category": 1,  # category 1 => real measurements
-            # You can also pass 'offset' / 'lastupdate' if needed
-        }
-
-        r = requests.post(
-            "https://wbsapi.withings.net/measure",
-            headers=headers,
-            data=data,
-            timeout=30,
-        )
-
-        if r.status_code != 200:
-            detail = r.json() if "application/json" in r.headers.get("content-type", "") else r.text
-            raise HTTPException(status_code=r.status_code, detail=detail)
-
-        j = r.json() or {}
-        if j.get("status") != 0:
-            # don’t kill UX; just return empty metrics
-            return {
-                "weightKg": None,
-                "restingHeartRate": None,
-                "raw": j,
-            }
-
-        body = j.get("body") or {}
-        grps = body.get("measuregrps") or []
-
-        def to_value(m):
-            # Convert Withings value with unit power-of-ten scaling
-            v = m.get("value")
-            u = m.get("unit", 0)
-            if isinstance(v, (int, float)) and isinstance(u, (int, float)):
-                return v * (10 ** u)
-            return None
-
-        latest_weight = None
-        latest_hr = None
-
-        # Iterate groups (they’re roughly chronological; we’ll just pick the latest occurrence per type)
-        for g in grps:
-            measures = g.get("measures") or []
-            for m in measures:
-                t = m.get("type")
-                if t == 1:  # weight
-                    w = to_value(m)
-                    if w is not None:
-                        latest_weight = w  # kg
-                elif t == 11:  # heart rate
-                    hr = to_value(m)
-                    if hr is not None:
-                        latest_hr = hr  # bpm
-
-        return {
-            "weightKg": latest_weight,
-            "restingHeartRate": latest_hr,
-            # include raw if you want to debug in the UI:
-            # "raw": j,
-        }
-
-    except requests.exceptions.RequestException as e:
-        raise HTTPException(status_code=503, detail=f"Failed to connect to Withings API: {e}")
-
-
-from fastapi import Query
-
-@router.get("/withings/metrics/daily")
-def withings_metrics_daily(
-    access_token: str,
-    date: str = Query(default=None, description="YYYY-MM-DD (defaults to today)"),
-):
-    """
-    Daily snapshot from Withings:
-      - steps
-      - calories
-      - sleepHours (sum for the date)
-    Uses:
-      * /v2/measure?action=getactivity (steps, calories)
-      * /v2/sleep?action=getsummary (sleep)
-    """
-    try:
-        # pick date (YYYY-MM-DD)
-        if not date:
-            from datetime import date as _date
-            date = _date.today().isoformat()
-
-        headers = {"Authorization": f"Bearer {access_token}"}
-
-        # -------- Activity (steps + calories) --------
-        act_payload = {
-            "action": "getactivity",
-            "startdateymd": date,
-            "enddateymd": date,
-        }
-        act_res = requests.post(
-            "https://wbsapi.withings.net/v2/measure",
-            headers=headers,
-            data=act_payload,
-            timeout=30,
-        )
-        if act_res.status_code != 200:
-            detail = act_res.json() if "application/json" in act_res.headers.get("content-type","") else act_res.text
-            raise HTTPException(status_code=act_res.status_code, detail=detail)
-        act_json = act_res.json() or {}
-        steps = None
-        calories = None
-        if act_json.get("status") == 0:
-            acts = (act_json.get("body") or {}).get("activities") or []
-            a0 = acts[0] if acts else {}
-            # Withings usually returns integers for steps & calories here
-            steps = a0.get("steps")
-            calories = a0.get("calories")
-
-        # -------- Sleep (sleepHours) --------
-        sleep_payload = {
-            "action": "getsummary",
-            "startdateymd": date,
-            "enddateymd": date,
-        }
-        slp_res = requests.post(
-            "https://wbsapi.withings.net/v2/sleep",
-            headers=headers,
-            data=sleep_payload,
-            timeout=30,
-        )
-        if slp_res.status_code != 200:
-            detail = slp_res.json() if "application/json" in slp_res.headers.get("content-type","") else slp_res.text
-            raise HTTPException(status_code=slp_res.status_code, detail=detail)
-        slp_json = slp_res.json() or {}
-
-        sleep_seconds = None
-        if slp_json.get("status") == 0:
-            series = (slp_json.get("body") or {}).get("series") or []
-            total_sec = 0
-            for item in series:
-                data = item.get("data") or {}
-                # common fields: totalsleepduration (s) or asleepduration (s)
-                if isinstance(data.get("totalsleepduration"), (int, float)):
-                    total_sec += data["totalsleepduration"]
-                elif isinstance(data.get("asleepduration"), (int, float)):
-                    total_sec += data["asleepduration"]
-            sleep_seconds = total_sec if total_sec > 0 else None
-
-        sleep_hours = round(sleep_seconds / 3600.0, 2) if isinstance(sleep_seconds, (int, float)) else None
-
-        return {
-            "date": date,
-            "steps": steps,
-            "calories": calories,
-            "sleepHours": sleep_hours,
-        }
-
-    except requests.exceptions.RequestException as e:
-        raise HTTPException(status_code=503, detail=f"Failed to connect to Withings API: {e}")
 
 

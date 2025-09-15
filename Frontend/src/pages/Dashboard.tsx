@@ -5,6 +5,9 @@ import {
   metricsOverview,
   withingsMetricsOverview,
   withingsMetricsDaily,
+  withingsSpO2, // NEW
+  withingsTemperature, // NEW
+  withingsHeartRate,
 } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import Header from "@/components/Header";
@@ -23,12 +26,12 @@ export default function Dashboard() {
   const [calories, setCalories] = useState<number | null>(null);
 
   // NEW states
-  const [vo2max, setVo2max] = useState<number | null>(null); // NEW
+  // const [vo2max, setVo2max] = useState<number | null>(null); // NEW
   const [spo2, setSpo2] = useState<number | null>(null); // NEW
   const [hrv, setHrv] = useState<number | null>(null); // NEW
-  const [respRate, setRespRate] = useState<number | null>(null); // NEW
+  // const [respRate, setRespRate] = useState<number | null>(null); // NEW
   const [tempVar, setTempVar] = useState<number | null>(null); // NEW
-  const [azm, setAzm] = useState<number | null>(null); // NEW
+  // const [azm, setAzm] = useState<number | null>(null); // NEW
   const [distance, setDistance] = useState<number | null>(null);
 
   useEffect(() => {
@@ -86,10 +89,30 @@ export default function Dashboard() {
 
             setWeight(w.weightKg ?? null);
             setRestingHR(w.restingHeartRate ?? null);
-
             setSteps(d.steps ?? null);
             setCalories(d.calories ?? null);
             setSleepHours(d.sleepHours ?? null);
+            setDistance(d.distanceKm ?? null);
+
+            // ---- NEW: Withings extras (SpO2 + Temperature) ----
+            const today = new Date().toISOString().slice(0, 10); // NEW
+            // SpO₂ (take latest percent)                           // NEW
+            withingsSpO2(access)
+              .then((s) => setSpo2(s?.latest?.percent ?? null)) // NEW
+              .catch(() => setSpo2(null)); // NEW
+
+            // Temperature: Withings returns body/skin absolute °C   // NEW
+            // For your "Skin Temperature Variability" tile,         // NEW
+            // show the latest available skin temp (or body temp).   // NEW
+            withingsTemperature(access, today, today) // NEW
+              .then((t) => {
+                // NEW
+                const item = t?.items?.[t.items.length - 1]; // NEW
+                const skin = item?.skin_c ?? null; // NEW
+                const body = item?.body_c ?? null; // NEW
+                setTempVar(skin ?? body ?? null); // NEW
+              }) // NEW
+              .catch(() => setTempVar(null));
           } catch (e) {
             // keep placeholders if it fails
             setWeight(null);
@@ -97,9 +120,15 @@ export default function Dashboard() {
             setSteps(null);
             setCalories(null);
             setSleepHours(null);
+            setSpo2(null);
+            setTempVar(null);
           }
 
           setInfo(null);
+          // HRV (Withings) not broadly available -> keep as dash
+          setHrv(null); // NEW
+          // Distance not provided here -> keep null (dash)
+          setDistance(null); // NEW
         }
       } catch (e: any) {
         setErr(e?.message ?? "Failed to load data");
@@ -127,6 +156,14 @@ export default function Dashboard() {
     [profile?.firstName, profile?.lastName].filter(Boolean).join(" ") ||
     "User";
 
+  const fmt = (n: number | null | undefined, dp = 1) =>
+    n == null ? "—" : Number(n).toFixed(dp);
+
+  const tempLabel =
+    provider === "withings"
+      ? "Skin Temperature"
+      : "Skin Temperature Variability";
+
   return (
     <>
       <Header />
@@ -142,6 +179,8 @@ export default function Dashboard() {
 
         {/* Fitbit metrics only for now; Withings shows placeholders */}
         <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <MetricCard title="Weight" value={weight ?? "—"} sub="kg" />
+          <MetricCard title="Distance" value={distance ?? "—"} sub="km" />
           <MetricCard title="Steps" value={steps ?? "—"} sub="today" />
           <MetricCard title="Calories" value={calories ?? "—"} sub="today" />
           <MetricCard
@@ -150,20 +189,22 @@ export default function Dashboard() {
             sub="bpm"
           />
           <MetricCard title="Sleep" value={sleepHours ?? "—"} sub="hours" />
-          <MetricCard title="Weight" value={weight ?? "—"} sub="kg" />
 
           {/* NEW extras */}
-          <MetricCard title="VO₂ Max" value={vo2max ?? "—"} sub="ml/kg/min" />
-          <MetricCard title="Blood Oxygen (SpO₂)" value={spo2 ?? "—"} sub="%" />
+          {/* <MetricCard title="VO₂ Max" value={vo2max ?? "—"} sub="ml/kg/min" /> */}
+          <MetricCard
+            title="Blood Oxygen (SpO₂)"
+            value={fmt(spo2, 1)}
+            sub="%"
+          />
           <MetricCard
             title="Heart Rate Variability (HRV)"
             value={hrv ?? "—"}
             sub="ms"
           />
-          <MetricCard title="Resp. Rate" value={respRate ?? "—"} sub="bpm" />
-          <MetricCard title="Skin Temp" value={tempVar ?? "—"} sub="Δ °C" />
-          <MetricCard title="AZM" value={azm ?? "—"} sub="min" />
-          <MetricCard title="Distance" value={distance ?? "—"} sub="km" />
+          {/* <MetricCard title="Resp. Rate" value={respRate ?? "—"} sub="bpm" /> */}
+          <MetricCard title={tempLabel} value={fmt(tempVar, 1)} sub="°C" />
+          {/* <MetricCard title="AZM" value={azm ?? "—"} sub="min" /> */}
         </section>
       </main>
     </>

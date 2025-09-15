@@ -147,21 +147,21 @@ export const metrics = {
   },
 
   // ---------- NEW: added Fitbit metrics ----------
-  vo2max: async (token: string, start: string, end: string) => {
-    const u = new URL(`${API_BASE_URL}/fitbit/metrics/vo2max`);
-    u.searchParams.set("access_token", token);
-    u.searchParams.set("start", start);
-    u.searchParams.set("end", end);
-    const r = await fetch(u.toString());
-    const d = await r.json();
-    if (!r.ok) throw new Error(d?.detail || "vo2max failed");
-    return d as {
-      start: string;
-      end: string;
-      items: { date: string; vo2max_ml_kg_min: number | null }[];
-      raw?: unknown;
-    };
-  },
+  // vo2max: async (token: string, start: string, end: string) => {
+  //   const u = new URL(`${API_BASE_URL}/fitbit/metrics/vo2max`);
+  //   u.searchParams.set("access_token", token);
+  //   u.searchParams.set("start", start);
+  //   u.searchParams.set("end", end);
+  //   const r = await fetch(u.toString());
+  //   const d = await r.json();
+  //   if (!r.ok) throw new Error(d?.detail || "vo2max failed");
+  //   return d as {
+  //     start: string;
+  //     end: string;
+  //     items: { date: string; vo2max_ml_kg_min: number | null }[];
+  //     raw?: unknown;
+  //   };
+  // },
 
   spo2Nightly: async (token: string, date?: string) => {
     const u = new URL(`${API_BASE_URL}/fitbit/metrics/spo2-nightly`);
@@ -195,21 +195,21 @@ export const metrics = {
     };
   },
 
-  respiratoryRate: async (token: string, start: string, end: string) => {
-    const u = new URL(`${API_BASE_URL}/fitbit/metrics/respiratory-rate`);
-    u.searchParams.set("access_token", token);
-    u.searchParams.set("start", start);
-    u.searchParams.set("end", end);
-    const r = await fetch(u.toString());
-    const d = await r.json();
-    if (!r.ok) throw new Error(d?.detail || "respiratory-rate failed");
-    return d as {
-      start: string;
-      end: string;
-      items: { date: string; breaths_per_min: number | null }[];
-      raw?: unknown;
-    };
-  },
+  // respiratoryRate: async (token: string, start: string, end: string) => {
+  //   const u = new URL(`${API_BASE_URL}/fitbit/metrics/respiratory-rate`);
+  //   u.searchParams.set("access_token", token);
+  //   u.searchParams.set("start", start);
+  //   u.searchParams.set("end", end);
+  //   const r = await fetch(u.toString());
+  //   const d = await r.json();
+  //   if (!r.ok) throw new Error(d?.detail || "respiratory-rate failed");
+  //   return d as {
+  //     start: string;
+  //     end: string;
+  //     items: { date: string; breaths_per_min: number | null }[];
+  //     raw?: unknown;
+  //   };
+  // },
 
   temperature: async (token: string, start: string, end: string) => {
     const u = new URL(`${API_BASE_URL}/fitbit/metrics/temperature`);
@@ -227,21 +227,21 @@ export const metrics = {
     };
   },
 
-  azm: async (token: string, start: string, end: string) => {
-    const u = new URL(`${API_BASE_URL}/fitbit/metrics/azm`);
-    u.searchParams.set("access_token", token);
-    u.searchParams.set("start", start);
-    u.searchParams.set("end", end);
-    const r = await fetch(u.toString());
-    const d = await r.json();
-    if (!r.ok) throw new Error(d?.detail || "azm failed");
-    return d as {
-      start: string;
-      end: string;
-      items: { date: string; minutes: number | null }[];
-      raw?: unknown;
-    };
-  },
+  // azm: async (token: string, start: string, end: string) => {
+  //   const u = new URL(`${API_BASE_URL}/fitbit/metrics/azm`);
+  //   u.searchParams.set("access_token", token);
+  //   u.searchParams.set("start", start);
+  //   u.searchParams.set("end", end);
+  //   const r = await fetch(u.toString());
+  //   const d = await r.json();
+  //   if (!r.ok) throw new Error(d?.detail || "azm failed");
+  //   return d as {
+  //     start: string;
+  //     end: string;
+  //     items: { date: string; minutes: number | null }[];
+  //     raw?: unknown;
+  //   };
+  // },
 
   distance: async (token: string, date?: string) => {
     // NEW
@@ -304,5 +304,69 @@ export async function withingsMetricsDaily(accessToken: string, date?: string) {
     steps: number | null;
     calories: number | null;
     sleepHours: number | null;
+    distanceKm: number | null;
   };
+}
+
+// ---- NEW: Withings specific metric helpers ----
+export async function withingsHeartRate(
+  accessToken: string,
+  start?: string,
+  end?: string
+) {
+  const u = new URL(`${API_BASE_URL}/withings/metrics/heart-rate`); // NEW
+  u.searchParams.set("access_token", accessToken); // NEW
+  if (start && end) {
+    // NEW
+    u.searchParams.set("start", start); // NEW
+    u.searchParams.set("end", end); // NEW
+  } // NEW
+  const r = await fetch(u.toString()); // NEW
+  const d = await r.json(); // NEW
+  if (!r.ok) throw new Error(d?.detail || "withings heart-rate failed"); // NEW
+  return d as {
+    latest?: { ts: number; bpm: number };
+    items?: { ts: number; bpm: number }[];
+  }; // NEW
+}
+
+export async function withingsSpO2(
+  accessToken: string,
+  start?: string,
+  end?: string
+) {
+  const u = new URL(`${API_BASE_URL}/withings/metrics/spo2`); // NEW
+  u.searchParams.set("access_token", accessToken); // NEW
+  if (start && end) {
+    // NEW
+    u.searchParams.set("start", start); // NEW
+    u.searchParams.set("end", end); // NEW
+  } // NEW
+  const r = await fetch(u.toString()); // NEW
+  const d = await r.json(); // NEW
+  if (!r.ok) throw new Error(d?.detail || "withings spo2 failed"); // NEW
+  return d as {
+    latest?: { ts: number; percent: number };
+    items?: { ts: number; percent: number }[];
+  }; // NEW
+}
+
+export async function withingsTemperature(
+  accessToken: string,
+  start: string,
+  end: string
+) {
+  const u = new URL(`${API_BASE_URL}/withings/metrics/temperature`); // NEW
+  u.searchParams.set("access_token", accessToken); // NEW
+  u.searchParams.set("start", start); // NEW
+  u.searchParams.set("end", end); // NEW
+  const r = await fetch(u.toString()); // NEW
+  const d = await r.json(); // NEW
+  if (!r.ok) throw new Error(d?.detail || "withings temperature failed"); // NEW
+  return d as {
+    // NEW
+    start: string; // NEW
+    end: string; // NEW
+    items: { ts: number; body_c: number | null; skin_c: number | null }[]; // NEW
+  }; // NEW
 }

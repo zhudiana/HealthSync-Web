@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from app.withings.auth import router as withings_router
+from app.withings.routes import router as withings_router
 from app.fitbit.routes import router as fitbit_router
 from fastapi.middleware.cors import CORSMiddleware
 

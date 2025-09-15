@@ -40,7 +40,10 @@ export default function Index() {
     setLoading("withings");
     try {
       // Default Withings scopes
-      await auth.loginStart("withings", "user.info,user.metrics");
+      await auth.loginStart(
+        "withings",
+        "user.info,user.metrics,user.activity,user.sleepevents"
+      );
       // Redirect happens inside loginStart
     } catch (e: any) {
       setErr(e?.message ?? "Failed to start Withings OAuth");

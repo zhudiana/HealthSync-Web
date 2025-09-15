@@ -88,7 +88,6 @@ def fitbit_sleep_summary(access_token: str, date: str = Query(default=None, desc
     }
 
 
-
 @router.get("/overview")
 def fitbit_overview(access_token: str, date: str = Query(default=None, description="YYYY-MM-DD")):
     """
@@ -106,6 +105,7 @@ def fitbit_overview(access_token: str, date: str = Query(default=None, descripti
     heart = _get(f"{FITBIT_API}/1/user/-/activities/heart/date/{d}/1d.json") or {}
     sleep = _get(f"{FITBIT_API}/1.2/user/-/sleep/date/{d}.json") or {}
     weight = _get(f"{FITBIT_API}/1/user/-/body/log/weight/date/{d}.json") or {}
+    
 
     steps = (daily.get("summary") or {}).get("steps")
     calories = (daily.get("summary") or {}).get("caloriesOut")
@@ -151,51 +151,9 @@ def fitbit_weight_latest(access_token: str, date: str = Query(default=None, desc
     j = r.json()
     items = j.get("weight", []) if isinstance(j, dict) else []
     latest = items[0] if items else {}
-    # Fitbit returns in the user's unit setting; most dev accounts default to kg
     return {"date": d, "latest": latest, "value": latest.get("weight"), "raw": j}
 
-# @router.get("/weight/latest")
-# def fitbit_weight_latest(access_token: str):
-#     """
-#     Most recent weight log in the last 30 days (not just today).
-#     """
-#     url = f"{FITBIT_API}/1/user/-/body/log/weight/date/today/1m.json"
-#     r = requests.get(url, headers=_auth_headers(access_token), timeout=30)
-#     if r.status_code == 401:
-#         raise HTTPException(status_code=401, detail="Access token expired or invalid")
-#     if r.status_code != 200:
-#         raise HTTPException(status_code=r.status_code, detail=r.text)
-
-#     j = r.json()
-#     items = j.get("weight", []) if isinstance(j, dict) else []
-#     latest = items[0] if items else {}
-#     return {
-#         "latest_date": latest.get("date"),
-#         "value": latest.get("weight"),
-#         "unit": latest.get("unit", "kg"),
-#         "raw": j
-#     }
-
-
-@router.get("/vo2max")
-def fitbit_vo2max(access_token: str,
-                  start: str = Query(..., description="YYYY-MM-DD"),
-                  end: str = Query(..., description="YYYY-MM-DD")):
-    url = f"{FITBIT_API}/1/user/-/cardio-fitness/date/{start}/{end}.json"
-    r = requests.get(url, headers=_auth_headers(access_token), timeout=30)
-    if r.status_code == 401:
-        raise HTTPException(status_code=401, detail="Access token expired or invalid")
-    if r.status_code != 200:
-        raise HTTPException(status_code=r.status_code, detail=r.text)
-
-    j = r.json()
-    items = j.get("cardio-fitness", []) if isinstance(j, dict) else []
-    # Normalize to ml/kg/min where present
-    out = [{"date": i.get("dateTime"),
-            "vo2max_ml_kg_min": (i.get("value") or {}).get("vo2Max")} for i in items]
-    return {"start": start, "end": end, "items": out, "raw": j}
-
-
+#blood oxygen
 @router.get("/spo2-nightly")
 def fitbit_spo2_nightly(access_token: str,
                         date: str = Query(default=None, description="YYYY-MM-DD")):
@@ -266,23 +224,6 @@ def fitbit_temperature(access_token: str,
     items = (j.get("tempSkin") or []) if isinstance(j, dict) else []
     out = [{"date": i.get("dateTime"),
             "delta_c": (i.get("value") or {}).get("nightlyRelative")} for i in items]
-    return {"start": start, "end": end, "items": out, "raw": j}
-
-
-@router.get("/azm")
-def fitbit_active_zone_minutes(access_token: str,
-                               start: str = Query(..., description="YYYY-MM-DD"),
-                               end: str = Query(..., description="YYYY-MM-DD")):
-    url = f"{FITBIT_API}/1/user/-/activities/active-zone-minutes/date/{start}/{end}.json"
-    r = requests.get(url, headers=_auth_headers(access_token), timeout=30)
-    if r.status_code == 401:
-        raise HTTPException(status_code=401, detail="Access token expired or invalid")
-    if r.status_code != 200:
-        raise HTTPException(status_code=r.status_code, detail=r.text)
-    j = r.json()
-    items = (j.get("activities-active-zone-minutes") or []) if isinstance(j, dict) else []
-    out = [{"date": i.get("dateTime"),
-            "minutes": (i.get("value") or {}).get("activeZoneMinutes")} for i in items]
     return {"start": start, "end": end, "items": out, "raw": j}
 
 

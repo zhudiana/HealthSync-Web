@@ -1,53 +1,42 @@
-# app/utils/withings_parser.py
-
+# app/withings/utils/withings_parser.py
 from datetime import datetime, timezone
 
+# Official meastypes (subset)
 WITHINGS_MEASURE_TYPES = {
-    1: "weight",              # kg
-    4: "height",              # m
-    5: "fat_free_mass",       # kg
-    6: "fat_ratio",           # %
-    8: "fat_mass_weight",     # kg
-    9: "diastolic_bp",        # mmHg
-    10: "systolic_bp",        # mmHg
-    11: "heart_rate",         # bpm
-    54: "sp02",               # %
-    71: "muscle_mass",        # kg
-    76: "hydration",          # %
-    77: "bone_mass",          # kg
-    88: "pulse_wave_velocity",# m/s
-    # Add more as needed
+    1:  "weight",               # kg
+    4:  "height",               # m
+    5:  "fat_free_mass",        # kg
+    6:  "fat_ratio",            # %
+    8:  "fat_mass_weight",      # kg
+    9:  "diastolic_bp",         # mmHg
+    10: "systolic_bp",          # mmHg
+    11: "heart_rate",           # bpm
+    12: "temperature",          # °C (legacy body temp)
+    54: "spo2",                 # %
+    71: "body_temperature",     # °C
+    73: "skin_temperature",     # °C
+    76: "muscle_mass",          # kg
+    77: "hydration",            # kg (Withings reports mass of water)
+    88: "bone_mass",            # kg
+    91: "pulse_wave_velocity",  # m/s
 }
 
 def parse_withings_measure_group(measuregrps: list) -> list[dict]:
-    """
-    Convert Withings API 'measuregrps' into human-readable values.
-    Returns a list of dicts, one per measurement group.
-    """
     results = []
-
-    for group in measuregrps:
-        # Convert timestamp -> UTC ISO string
-        timestamp_unix = group.get("date")
-        timestamp_iso = (
-            datetime.fromtimestamp(timestamp_unix, tz=timezone.utc).isoformat()
-            if timestamp_unix
-            else None
-        )
-
+    for group in measuregrps or []:
+        ts_unix = group.get("date")
+        ts_iso = datetime.fromtimestamp(ts_unix, tz=timezone.utc).isoformat() if ts_unix else None
         entry = {
             "group_id": group.get("grpid"),
-            "timestamp": timestamp_iso,
+            "timestamp": ts_iso,
             "category": group.get("category"),
             "measures": {}
         }
-
-        for measure in group.get("measures", []):
-            m_type = measure["type"]
-            name = WITHINGS_MEASURE_TYPES.get(m_type, f"unknown_{m_type}")
-            value = measure["value"] * (10 ** measure["unit"])
-            entry["measures"][name] = value
-
+        for m in group.get("measures", []):
+            name = WITHINGS_MEASURE_TYPES.get(m.get("type"), f"unknown_{m.get('type')}")
+            value = m.get("value")
+            unit_pow10 = m.get("unit", 0)
+            val = value * (10 ** unit_pow10) if isinstance(value, (int, float)) and isinstance(unit_pow10, (int, float)) else None
+            entry["measures"][name] = val
         results.append(entry)
-
     return results
