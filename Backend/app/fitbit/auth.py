@@ -7,10 +7,10 @@ import secrets
 import urllib.parse
 from typing import Optional, Dict, Any
 from app.config import FITBIT_CLIENT_ID, FITBIT_CLIENT_SECRET, FITBIT_REDIRECT_URI
-from datetime import datetime, timedelta
-from fastapi import Query
+
 
 router = APIRouter(prefix="/fitbit", tags=["Fitbit Auth"])
+
 
 FITBIT_AUTHORIZE_URL = "https://www.fitbit.com/oauth2/authorize"
 FITBIT_TOKEN_URL = "https://api.fitbit.com/oauth2/token"
@@ -51,7 +51,7 @@ def generate_pkce_values() -> PKCEValues:
 
 
 @router.get("/login")
-def login_fitbit(scope: str = "activity heartrate location nutrition profile settings sleep social weight"):
+def login_fitbit():
     """
     Step 1 & 2: Generate PKCE values and redirect user to Fitbit authorization page
     
@@ -66,6 +66,8 @@ def login_fitbit(scope: str = "activity heartrate location nutrition profile set
     - social: Access to friends and leaderboards
     - weight: Access to weight and body fat data
     """
+    FITBIT_SCOPES = "activity heartrate sleep temperature oxygen_saturation weight profile settings"
+
     try:
         # Generate PKCE values
         pkce_values = generate_pkce_values()
@@ -83,10 +85,11 @@ def login_fitbit(scope: str = "activity heartrate location nutrition profile set
             "response_type": "code",
             "code_challenge": pkce_values.code_challenge,
             "code_challenge_method": "S256",
-            "scope": scope,
+            "scope": FITBIT_SCOPES,
             "state": pkce_values.state,
             "redirect_uri": FITBIT_REDIRECT_URI,
-            "prompt": "consent"
+            "prompt": "consent",
+            "include_granted_scopes": "true",
         }
         
         auth_url = f"{FITBIT_AUTHORIZE_URL}?{urllib.parse.urlencode(auth_params)}"
@@ -95,6 +98,7 @@ def login_fitbit(scope: str = "activity heartrate location nutrition profile set
             "authorization_url": auth_url,
             "state": pkce_values.state,
             "redirect_uri": FITBIT_REDIRECT_URI,
+            "requested_scopes": FITBIT_SCOPES,
             "message": "Visit the authorization_url to authorize the application"
         }
         

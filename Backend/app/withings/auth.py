@@ -308,7 +308,6 @@ def cleanup_expired_sessions(max_age_seconds: int = 3600):
     }
 
 
-
 @router.get("/withings/profile")
 def withings_profile(access_token: str):
     """
@@ -359,8 +358,6 @@ def withings_profile(access_token: str):
         # Network error → still return placeholder
         return {"id": None, "firstName": None, "lastName": None, "fullName": "Withings User"}
 
-########################
-# ADD: exchange endpoint so SPA can trade code -> tokens
 
 @router.post("/withings/exchange")
 def withings_exchange(payload: Dict[str, str] = Body(...)):

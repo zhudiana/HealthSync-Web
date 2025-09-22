@@ -29,59 +29,6 @@ def _post(url: str, headers: dict, data: dict, timeout: int = 30):
     return j
 
 # -------- Overview (weight + RHR) --------
-# @router.get("/daily")
-# def daily_metrics(access_token: str, date: str = Query(default=None, description="YYYY-MM-DD")):
-#     """
-#     Daily snapshot from Withings:
-#       - steps
-#       - calories
-#       - sleepHours
-#     """
-#     if not date:
-#         date = _date.today().isoformat()
-
-#     headers = _auth(access_token)
-
-#     # --- Activity (steps + calories) ---
-#     act_payload = {"action": "getactivity", "startdateymd": date, "enddateymd": date}
-#     act_res = requests.post("https://wbsapi.withings.net/v2/measure", headers=headers, data=act_payload, timeout=30)
-#     if act_res.status_code != 200:
-#         return {"date": date, "steps": None, "calories": None, "sleepHours": None}
-#     act_json = act_res.json() or {}
-#     steps = calories = distance_km = None
-#     if act_json.get("status") == 0:
-#         acts = (act_json.get("body") or {}).get("activities") or []
-#         a0 = acts[0] if acts else {}
-#         steps = a0.get("steps")
-#         calories = a0.get("calories")
-#         distance_km = a0.get("distance")
-
-#     # --- Sleep (hours) ---
-#     slp_res = requests.post("https://wbsapi.withings.net/v2/sleep",
-#                             headers=headers,
-#                             data={"action": "getsummary", "startdateymd": date, "enddateymd": date},
-#                             timeout=30)
-#     sleep_hours = None
-#     if slp_res.status_code == 200:
-#         slp_json = slp_res.json() or {}
-#         if slp_json.get("status") == 0:
-#             series = (slp_json.get("body") or {}).get("series") or []
-#             total_sec = 0
-#             for item in series:
-#                 data = item.get("data") or {}
-#                 if isinstance(data.get("totalsleepduration"), (int, float)):
-#                     total_sec += data["totalsleepduration"]
-#                 elif isinstance(data.get("asleepduration"), (int, float)):
-#                     total_sec += data["asleepduration"]
-#             sleep_hours = round(total_sec / 3600.0, 2) if total_sec else None
-
-#     return {
-#         "date": date, 
-#         "steps": steps, 
-#         "calories": calories, 
-#         "sleepHours": sleep_hours, 
-#         "distanceKm": distance_km
-#         }
 
 @router.get("/daily")
 def daily_metrics(
@@ -106,7 +53,12 @@ def daily_metrics(
     def fetch_for(dstr: str):
         # --- Activity ---
         steps = calories = distance_km = None
-        act_payload = {"action": "getactivity", "startdateymd": dstr, "enddateymd": dstr}
+        act_payload = {
+            "action": "getactivity", 
+            "startdateymd": dstr,
+            "enddateymd": dstr,
+             "data_fields": "steps,distance,calories,totalcalories"
+            }
         act_res = requests.post(MEASURE_V2_URL, headers=headers, data=act_payload, timeout=30)
 
         act_json = None
@@ -124,7 +76,12 @@ def daily_metrics(
 
         # --- Sleep ---
         sleep_hours = None
-        slp_payload = {"action": "getsummary", "startdateymd": dstr, "enddateymd": dstr}
+        slp_payload = {
+            "action": "getsummary", 
+            "startdateymd": dstr, 
+            "enddateymd": dstr,
+            "data_fields": "totalsleepduration,asleepduration"
+            }
         slp_res = requests.post(SLEEP_V2_URL, headers=headers, data=slp_payload, timeout=30)
 
         slp_json = None
@@ -200,7 +157,7 @@ def overview(access_token: str):
 
     return {"weightKg": latest_weight, "restingHeartRate": latest_hr}
 
-# -------- Weight --------
+
 @router.get("/weight/latest")
 def weight_latest(access_token: str, lookback_days: int = Query(90, ge=1, le=365)):
     """
@@ -252,35 +209,114 @@ def weight_history(access_token: str,
     items.sort(key=lambda x: x["date"])
     return {"start": start, "end": end, "items": items}
 
-# -------- Heart Rate (latest/range) --------
-@router.get("/heart-rate")
-def heart_rate(access_token: str,
-               start: Optional[str] = Query(None, description="YYYY-MM-DD"),
-               end: Optional[str] = Query(None, description="YYYY-MM-DD")):
+
+@router.get("/heart-rate/daily")
+def heart_rate_daily(
+    access_token: str,
+    date: Optional[str] = Query(None, description="YYYY-MM-DD (defaults to today)")
+):
     """
-    Latest or range of heart rate samples (bpm).
-    If start/end omitted, returns the latest sample.
+    Daily heart-rate roll-up from Withings (avg/min/max) for the given local day.
+    This is NOT 'resting HR'; it's the day's HR summary calculated by Withings.
     """
+    if not date:
+        date = _date.today().isoformat()
+
     headers = _auth(access_token)
-    payload = {"action":"getmeas","meastype":"11","category":1}
-    if start and end:
-        payload.update({"startdateymd": start, "enddateymd": end})
-    j = _post(MEASURE_URL, headers, payload)
+    payload = {
+        "action": "getactivity",
+        "startdateymd": date,
+        "enddateymd": date,
+        "data_fields": "hr_average,hr_min,hr_max"
+    }
+    j = _post(MEASURE_V2_URL, headers, payload)
     if not j:
-        return {"items": []}
-    items = []
-    for g in (j.get("body") or {}).get("measuregrps", []):
-        for m in g.get("measures", []):
-            if m.get("type") == 11:
-                v = m.get("value")
-                u = m.get("unit",0)
-                bpm = v * (10 ** u) if isinstance(v,(int,float)) and isinstance(u,(int,float)) else None
-                if bpm is not None:
-                    items.append({"ts": g.get("date"), "bpm": bpm})
-    if not (start and end) and items:
+        return {"date": date, "hr_average": None, "hr_min": None, "hr_max": None, "updatedAt": None}
+
+    acts = (j.get("body") or {}).get("activities") or []
+    a0 = acts[0] if acts else {}
+    updated_at = a0.get("modified") or a0.get("date")  # epoch seconds if present
+
+    return {
+        "date": date,
+        "hr_average": a0.get("hr_average"),
+        "hr_min": a0.get("hr_min"),
+        "hr_max": a0.get("hr_max"),
+        "updatedAt": updated_at  # epoch seconds or None
+    }
+
+@router.get("/heart-rate/intraday")
+def heart_rate_intraday(
+    access_token: str,
+    start: Optional[str] = Query(None, description="YYYY-MM-DD (defaults to today)"),
+    end: Optional[str] = Query(None, description="YYYY-MM-DD (defaults to start)")
+):
+    """
+    Intraday heart-rate samples (bpm) using Measure v2 getintradayactivity.
+    Use for charts or 'current' HR. Returns timestamps (epoch seconds) with bpm.
+    """
+    from datetime import datetime, timezone as _tz, timedelta
+    import time as _time_mod
+
+    headers = _auth(access_token)
+
+    if not start:
+        start = _date.today().isoformat()
+    if not end:
+        end = start
+
+    def _day_bounds(ymd: str):
+        # local start/end of day; if your server is UTC-only, adjust here
+        start_dt_local = datetime.fromisoformat(ymd).replace(hour=0, minute=0, second=0, microsecond=0)
+        end_dt_local = start_dt_local + timedelta(days=1)
+        return int(start_dt_local.replace(tzinfo=_tz.utc).timestamp()), int(end_dt_local.replace(tzinfo=_tz.utc).timestamp())
+
+    def _collect(start_unix: int, end_unix: int):
+        payload = {
+            "action": "getintradayactivity",
+            "startdate": start_unix,
+            "enddate": end_unix,
+            "data_fields": "heart_rate"
+        }
+        j = _post(MEASURE_V2_URL, headers, payload)
+        if not j:
+            return []
+        body = (j.get("body") or {})
+        series = body.get("series")
+        points = []
+        if isinstance(series, list):
+            src = series
+        elif isinstance(series, dict):
+            src = series.get("data") if isinstance(series.get("data"), list) else list(series.values())
+        else:
+            src = (body.get("data") or []) if isinstance(body.get("data"), list) else []
+
+        for pt in src:
+            d = pt.get("data") if isinstance(pt, dict) and isinstance(pt.get("data"), dict) else pt
+            bpm = d.get("heart_rate")
+            ts = pt.get("timestamp") or pt.get("time")  # different shapes exist
+            if isinstance(bpm, (int, float)) and isinstance(ts, (int, float, int)):
+                points.append({"ts": int(ts), "bpm": float(bpm)})
+        return points
+
+    items: list[dict] = []
+    cur = _date.fromisoformat(start)
+    last = _date.fromisoformat(end)
+    while cur <= last:
+        s, e = _day_bounds(cur.isoformat())
+    
+        if cur == _date.today():
+            e = min(e, int(_time_mod.time()))
+        items.extend(_collect(s, e))
+        cur += timedelta(days=1)
+
+  
+    if start == end and items:
         latest = max(items, key=lambda x: x["ts"])
-        return {"latest": latest}
+        return {"latest": latest, "items": items}
+
     return {"items": items}
+
 
 # -------- Oxygen Saturation (SpO₂) --------
 @router.get("/spo2")
@@ -310,6 +346,7 @@ def spo2(access_token: str,
         latest = max(items, key=lambda x: x["ts"])
         return {"latest": latest}
     return {"items": items}
+
 
 # -------- Body & Skin Temperature --------
 @router.get("/temperature")
@@ -342,6 +379,7 @@ def temperature(access_token: str,
             items.append({"ts": ts, "body_c": body_c, "skin_c": skin_c})
     return {"start": start, "end": end, "items": items}
 
+
 # -------- Sleep summary (hours) --------
 @router.get("/sleep")
 def sleep_summary(access_token: str,
@@ -353,7 +391,12 @@ def sleep_summary(access_token: str,
     if not date:
         date = _date.today().isoformat()
     headers = _auth(access_token)
-    j = _post(SLEEP_V2_URL, headers, {"action":"getsummary","startdateymd":date,"enddateymd":date})
+    j = _post(SLEEP_V2_URL, headers, {
+        "action":"getsummary",
+        "startdateymd":date,
+        "enddateymd":date,
+        "data_fields": "totalsleepduration,asleepduration"
+        })
     if not j:
         return {"date": date, "sleepHours": None}
     series = (j.get("body") or {}).get("series") or []
