@@ -78,7 +78,6 @@ export async function revoke(accessToken: string, provider: Provider) {
   return data;
 }
 
-// ---------- Fitbit extras ----------
 export async function tokenInfo(accessToken: string) {
   const res = await fetch(
     `${API_BASE_URL}/fitbit/token-info?access_token=${encodeURIComponent(
@@ -90,7 +89,6 @@ export async function tokenInfo(accessToken: string) {
   return data;
 }
 
-// api.ts (near the top with other types)
 export type CaloriesBlock = {
   total: number | null;
   active?: number | null;
@@ -98,7 +96,6 @@ export type CaloriesBlock = {
   goal_total?: number | null;
 };
 
-// api.ts (metricsOverview)
 export async function metricsOverview(accessToken: string, date?: string) {
   const url = new URL(`${API_BASE_URL}/fitbit/metrics/overview`);
   url.searchParams.set("access_token", accessToken);
@@ -108,8 +105,6 @@ export async function metricsOverview(accessToken: string, date?: string) {
   const data = await res.json();
   if (!res.ok) throw new Error(data?.detail || "overview failed");
 
-  // Type says this response MAY include the new calories block,
-  // and also keeps legacy fields for backward compatibility.
   return data as {
     date: string;
     steps?: number | null;
@@ -263,6 +258,16 @@ export async function withingsMetricsOverview(accessToken: string) {
   return data as { weightKg: number | null; restingHeartRate: number | null };
 }
 
+export async function withingsWeightLatest(accessToken: string) {
+  const u = new URL(`${API_BASE_URL}/withings/metrics/weight/latest`);
+  u.searchParams.set("access_token", accessToken);
+  const r = await fetch(u.toString());
+  const d = await r.json();
+  if (!r.ok) throw new Error(d?.detail || "withings weight latest failed");
+  // d = { value: number|null, latest_date: "YYYY-MM-DD"|null }
+  return d as { value: number | null; latest_date: string | null };
+}
+
 export async function withingsMetricsDaily(accessToken: string, date?: string) {
   const url = new URL(`${API_BASE_URL}/withings/metrics/daily`);
   url.searchParams.set("access_token", accessToken);
@@ -280,7 +285,6 @@ export async function withingsMetricsDaily(accessToken: string, date?: string) {
   };
 }
 
-// ---- NEW: Withings specific metric helpers ----
 export async function withingsHeartRate(
   accessToken: string,
   start?: string,
@@ -302,9 +306,6 @@ export async function withingsHeartRate(
   }; // NEW
 }
 
-// ---------- Withings: Heart Rate (Daily + Intraday) ----------
-
-// Daily roll-up (avg/min/max) for a day
 export async function withingsHeartRateDaily(
   accessToken: string,
   date?: string // YYYY-MM-DD (defaults to today on the backend)
@@ -324,22 +325,54 @@ export async function withingsHeartRateDaily(
   };
 }
 
-// Intraday HR series (timestamps + bpm)
+// export async function withingsHeartRateIntraday(
+//   accessToken: string,
+//   start?: string, // YYYY-MM-DD
+//   end?: string // YYYY-MM-DD
+// ) {
+//   const u = new URL(`${API_BASE_URL}/withings/metrics/heart-rate/intraday`);
+//   u.searchParams.set("access_token", accessToken);
+//   if (start) u.searchParams.set("start", start);
+//   if (end) u.searchParams.set("end", end || start!);
+//   const r = await fetch(u.toString());
+//   const d = await r.json();
+//   if (!r.ok) throw new Error(d?.detail || "withings hr intraday failed");
+//   return d as {
+//     latest?: { ts: number; bpm: number };
+//     items: { ts: number; bpm: number }[];
+//   };
+// }
+
+// api.ts
 export async function withingsHeartRateIntraday(
   accessToken: string,
-  start?: string, // YYYY-MM-DD
-  end?: string // YYYY-MM-DD
+  opts?: {
+    start?: string; // YYYY-MM-DD
+    end?: string; // YYYY-MM-DD
+    minutes?: number; // rolling lookback ending now
+    start_time?: string; // "HH:MM" (local) used with 'start'
+    end_time?: string; // "HH:MM" (local) used with 'end'
+  }
 ) {
   const u = new URL(`${API_BASE_URL}/withings/metrics/heart-rate/intraday`);
   u.searchParams.set("access_token", accessToken);
-  if (start) u.searchParams.set("start", start);
-  if (end) u.searchParams.set("end", end || start!);
-  const r = await fetch(u.toString());
+
+  if (opts?.minutes != null) {
+    u.searchParams.set("minutes", String(opts.minutes));
+  } else {
+    if (opts?.start) u.searchParams.set("start", opts.start);
+    if (opts?.end) u.searchParams.set("end", opts.end || opts.start!);
+    if (opts?.start_time) u.searchParams.set("start_time", opts.start_time);
+    if (opts?.end_time) u.searchParams.set("end_time", opts.end_time);
+  }
+
+  const r = await fetch(u.toString(), { cache: "no-store" });
   const d = await r.json();
   if (!r.ok) throw new Error(d?.detail || "withings hr intraday failed");
   return d as {
     latest?: { ts: number; bpm: number };
     items: { ts: number; bpm: number }[];
+    window?: { start_utc: number; end_utc: number };
   };
 }
 

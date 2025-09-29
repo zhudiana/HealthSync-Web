@@ -42,8 +42,10 @@ def save_sessions(sessions):
 withings_sessions = load_sessions()
 
 @router.get("/withings/login")
-def login_withings(scope: str = "user.info,user.metrics,user.activity,user.sleepevents"):
+def login_withings():
     """Generate authorization URL for Withings OAuth 2.0"""
+
+    WITHINGS_SCOPE = "user.info,user.metrics,user.activity,user.sleepevents"
     try:
         # Generate secure state parameter
         state = secrets.token_urlsafe(32)
@@ -63,7 +65,7 @@ def login_withings(scope: str = "user.info,user.metrics,user.activity,user.sleep
             "response_type": "code",
             "client_id": WITHINGS_CLIENT_ID,
             "redirect_uri": WITHINGS_REDIRECT_URI,
-            "scope": scope,
+            "scope": WITHINGS_SCOPE,
             "state": state
         }
         

@@ -155,21 +155,29 @@ def fitbit_overview(access_token: str, date: str = Query(default=None, descripti
 
 
 @router.get("/weight")
-def fitbit_weight_latest(
+def fitbit_weight_logs(
     access_token: str,
-    date: str = Query(default=None, description="YYYY-MM-DD"),
-    period: str = Query(default="max", description="1d, 7d, 30d, 1w, 1m, 3m, 6m, 1y, max"),
+    date: str = Query(default=None, description="YYYY-MM-DD (default: today)"),
+    period: str = Query(default="1m", description="One of: 1d,7d,30d,1w,1m,3m,6m,1y,max"),
+    end: str | None = Query(default=None, description="YYYY-MM-DD (use this to request a date range instead of a period)"),
 ):
     """
-    Latest available weight log on or *before* `date` (default: today).
-    Uses Fitbit's /body/log/weight/date/{date}/{period}.json.
+    Return Fitbit *available weight logs*.
+    - If `end` is provided, uses the date-range endpoint.
+    - Otherwise uses the date+period endpoint.
+    Response mirrors Fitbit's `weight` array; no extra logic.
     """
-    from datetime import datetime
-
     d = date or _user_local_today(access_token)
-    url = f"{FITBIT_API}/1/user/-/body/log/weight/date/{d}/{period}.json"
-    r = requests.get(url, headers=_auth_headers(access_token), timeout=30)
 
+    allowed = {"1d","7d","30d","1w","1m","3m","6m","1y","max"}
+    if end:
+        url = f"{FITBIT_API}/1/user/-/body/log/weight/date/{d}/{end}.json"
+    else:
+        if period not in allowed:
+            raise HTTPException(status_code=400, detail=f"Invalid period '{period}'. Allowed: {sorted(allowed)}")
+        url = f"{FITBIT_API}/1/user/-/body/log/weight/date/{d}/{period}.json"
+
+    r = requests.get(url, headers=_auth_headers(access_token), timeout=30)
     if r.status_code == 401:
         raise HTTPException(status_code=401, detail="Access token expired or invalid")
     if r.status_code != 200:
@@ -178,44 +186,13 @@ def fitbit_weight_latest(
     j = r.json()
     items = j.get("weight", []) if isinstance(j, dict) else []
 
-    def _dt(item):
-        # Some entries may lack "time"; treat as midnight
-        t = item.get("time", "00:00:00")
-        return datetime.fromisoformat(f"{item.get('date', d)}T{t}")
-
-    latest = max(items, key=_dt) if items else None
-
     return {
-        "base_date": d,                 # the 'date' you asked up to
-        "period": period,               # the lookback used
-        "latest_date": latest.get("date") if latest else None,
-        "latest": latest or {},
-        "value": (latest or {}).get("weight"),
+        "date": d,
+        "period": None if end else period,
+        "end": end,
         "count": len(items),
-        "raw": j,
+        "items": items,   # direct Fitbit logs
     }
-
-
-# @router.get("/spo2-nightly")
-# def fitbit_spo2_nightly(access_token: str,
-#                         date: str = Query(default=None, description="YYYY-MM-DD")):
-#     d = date or _user_local_today(access_token)
-#     url = f"{FITBIT_API}/1/user/-/spo2/date/{d}.json"
-#     r = requests.get(url, headers=_auth_headers(access_token), timeout=30)
-#     if r.status_code == 401:
-#         raise HTTPException(status_code=401, detail="Access token expired or invalid")
-#     if r.status_code != 200:
-#         raise HTTPException(status_code=r.status_code, detail=r.text)
-
-#     j = r.json()
-#     val = (j.get("spo2") or [{}])[0] if isinstance(j, dict) else {}
-#     return {
-#         "date": d,
-#         "average": (val.get("value") or {}).get("avg"),
-#         "min": (val.get("value") or {}).get("min"),
-#         "max": (val.get("value") or {}).get("max"),
-#         "raw": j
-#     }
 
 
 @router.get("/spo2-nightly")
@@ -375,3 +352,143 @@ def fitbit_workouts(access_token: str,
     return {"afterDate": after_date, "count": len(out), "items": out, "raw": j}
 
 
+@router.get("/heart-rate/intraday")
+def fitbit_intraday_heart_rate(
+    access_token: str,
+    minutes: int | None = Query(None, ge=1, le=1440, description="Rolling lookback ending now (user local)"),
+    start: str | None = Query(None, description="YYYY-MM-DD (user local)"),
+    end: str | None = Query(None, description="YYYY-MM-DD (user local; defaults to start)"),
+    start_time: str | None = Query(None, description="HH:MM (used with 'start')"),
+    end_time: str | None = Query(None, description="HH:MM (used with 'end')"),
+    detail: str = Query("1sec", regex="^(1sec|1min)$", description="Intraday granularity")
+):
+    """
+    Fitbit Intraday Heart Rate.
+    - If 'minutes' is provided: fetch the last N minutes ending now (may span midnight).
+    - Else: fetch explicit slice(s) defined by date/time.
+    Returns: { items: [{ts,bpm}], latest?: {ts,bpm}, window: {start_local,end_local,tz} }
+    """
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+    import requests
+
+    # --- get user's timezone from profile (kept local to this route) ---
+    try:
+        prof = requests.get(f"{FITBIT_API}/1/user/-/profile.json",
+                            headers=_auth_headers(access_token), timeout=15)
+        tzname = (prof.json() or {}).get("user", {}).get("timezone") or "UTC"
+    except Exception:
+        tzname = "UTC"
+    USER_TZ = ZoneInfo(tzname)
+
+    def _slice_url(date_str: str, hhmm_start: str | None, hhmm_end: str | None) -> str:
+        if hhmm_start and hhmm_end:
+            return (f"{FITBIT_API}/1/user/-/activities/heart/date/"
+                    f"{date_str}/{date_str}/{detail}/time/{hhmm_start}/{hhmm_end}.json")
+        return (f"{FITBIT_API}/1/user/-/activities/heart/date/"
+                f"{date_str}/{date_str}/{detail}.json")
+
+    def _fetch(date_str: str, hhmm_start: str | None, hhmm_end: str | None) -> dict:
+        url = _slice_url(date_str, hhmm_start, hhmm_end)
+        r = requests.get(url, headers=_auth_headers(access_token), timeout=30)
+        if r.status_code == 401:
+            raise HTTPException(status_code=401, detail="Access token expired or invalid")
+        if r.status_code == 403:
+            # Usually: intraday not approved for client/server apps
+            raise HTTPException(status_code=403, detail="Forbidden: intraday access not granted for this app/scopes")
+        if r.status_code == 429:
+            raise HTTPException(status_code=429, detail="Rate limit exceeded; back off and retry")
+        if r.status_code != 200:
+            raise HTTPException(status_code=r.status_code, detail=r.text)
+        return r.json() or {}
+
+    def _parse(j: dict, date_str: str) -> list[dict]:
+        data = (j.get("activities-heart-intraday") or {}).get("dataset") or []
+        out: list[dict] = []
+        if not isinstance(data, list):
+            return out
+        for row in data:
+            t = row.get("time")
+            v = row.get("value")
+            if not isinstance(t, str) or not isinstance(v, (int, float)):
+                continue
+            # Fitbit gives 'HH:MM' or 'HH:MM:SS' in user's local TZ
+            if len(t) == 5:
+                t = t + ":00"
+            try:
+                dt_local = datetime.fromisoformat(f"{date_str}T{t}").replace(tzinfo=USER_TZ)
+                ts = int(dt_local.astimezone(ZoneInfo("UTC")).timestamp())
+                out.append({"ts": ts, "bpm": float(v)})
+            except Exception:
+                continue
+        # sort + dedupe
+        out.sort(key=lambda x: x["ts"])
+        seen, dedup = set(), []
+        for p in out:
+            if p["ts"] not in seen:
+                dedup.append(p)
+                seen.add(p["ts"])
+        return dedup
+
+    # ----- build local window -----
+    if minutes:
+        end_local = datetime.now(USER_TZ)
+        start_local = end_local - timedelta(minutes=minutes)
+    else:
+        # default: today full day if not provided
+        if not start:
+            today = datetime.now(USER_TZ)
+            start_local = today.replace(hour=0, minute=0, second=0, microsecond=0)
+            end_local = today
+        else:
+            sdate = datetime.fromisoformat(start).date()
+            edate = datetime.fromisoformat(end or start).date()
+            if edate < sdate:
+                sdate, edate = edate, sdate
+            start_local = datetime.combine(sdate, datetime.min.time()).replace(tzinfo=USER_TZ)
+            end_local = datetime.combine(edate, datetime.max.time()).replace(tzinfo=USER_TZ)
+            if start_time:
+                h, m = map(int, start_time.split(":"))
+                start_local = start_local.replace(hour=h, minute=m, second=0, microsecond=0)
+            if end_time and sdate == edate:
+                h, m = map(int, end_time.split(":"))
+                end_local = end_local.replace(hour=h, minute=m, second=0, microsecond=0)
+            # clamp to now for live day
+            now_local = datetime.now(USER_TZ)
+            if end_local > now_local:
+                end_local = now_local
+
+    if end_local <= start_local:
+        return {"items": []}
+
+    # ----- split by day (Fitbit intraday must be single-day) -----
+    items: list[dict] = []
+    cur = start_local.date()
+    last = end_local.date()
+
+    while cur <= last:
+        day_start = datetime.combine(cur, datetime.min.time()).replace(tzinfo=USER_TZ)
+        day_end = datetime.combine(cur, datetime.max.time()).replace(tzinfo=USER_TZ)
+        s = max(start_local, day_start)
+        e = min(end_local, day_end)
+
+        s_hhmm = s.strftime("%H:%M")
+        e_hhmm = e.strftime("%H:%M")
+
+        j = _fetch(cur.isoformat(), s_hhmm, e_hhmm)
+        items.extend(_parse(j, cur.isoformat()))
+
+        cur += timedelta(days=1)
+
+    items.sort(key=lambda x: x["ts"])
+    latest = items[-1] if items else None
+
+    return {
+        "items": items,
+        "latest": latest,
+        "window": {
+            "start_local": int(start_local.timestamp()),
+            "end_local": int(end_local.timestamp()),
+            "tz": tzname
+        }
+    }
