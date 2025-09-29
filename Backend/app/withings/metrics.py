@@ -341,7 +341,6 @@ def heart_rate_daily(
     }
 
 
-
 @router.get("/heart-rate/intraday")
 def heart_rate_intraday(
     access_token: str,
@@ -530,7 +529,6 @@ def heart_rate_intraday(
             "keys": list((raw_hint or {}).keys())[:8],
         }
     return resp
-
 
 
 # -------- Oxygen Saturation (SpO₂) --------
