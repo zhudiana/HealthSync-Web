@@ -248,6 +248,42 @@ export async function exchangeWithingsCode(code: string, state: string) {
   return data; // { tokens: {...} }
 }
 
+export async function getUserByAuth(authUserId: string) {
+  const r = await fetch(
+    `${API_BASE_URL}/users/by-auth/${encodeURIComponent(authUserId)}`
+  );
+  const d = await r.json();
+  if (!r.ok) throw new Error(d?.detail || "Failed to load user");
+  return d as {
+    id: string;
+    auth_user_id: string;
+    email: string | null;
+    display_name: string | null;
+  };
+}
+
+export async function updateUserByAuth(
+  authUserId: string,
+  body: { display_name?: string; email?: string }
+) {
+  const r = await fetch(
+    `${API_BASE_URL}/users/by-auth/${encodeURIComponent(authUserId)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }
+  );
+  const d = await r.json();
+  if (!r.ok) throw new Error(d?.detail || "Failed to update user");
+  return d as {
+    id: string;
+    auth_user_id: string;
+    email: string | null;
+    display_name: string | null;
+  };
+}
+
 export async function withingsMetricsOverview(accessToken: string) {
   const url = new URL(`${API_BASE_URL}/withings/metrics/overview`);
   url.searchParams.set("access_token", accessToken);
@@ -325,57 +361,6 @@ export async function withingsHeartRateDaily(
   };
 }
 
-// export async function withingsHeartRateIntraday(
-//   accessToken: string,
-//   start?: string, // YYYY-MM-DD
-//   end?: string // YYYY-MM-DD
-// ) {
-//   const u = new URL(`${API_BASE_URL}/withings/metrics/heart-rate/intraday`);
-//   u.searchParams.set("access_token", accessToken);
-//   if (start) u.searchParams.set("start", start);
-//   if (end) u.searchParams.set("end", end || start!);
-//   const r = await fetch(u.toString());
-//   const d = await r.json();
-//   if (!r.ok) throw new Error(d?.detail || "withings hr intraday failed");
-//   return d as {
-//     latest?: { ts: number; bpm: number };
-//     items: { ts: number; bpm: number }[];
-//   };
-// }
-
-// api.ts
-export async function withingsHeartRateIntraday(
-  accessToken: string,
-  opts?: {
-    start?: string; // YYYY-MM-DD
-    end?: string; // YYYY-MM-DD
-    minutes?: number; // rolling lookback ending now
-    start_time?: string; // "HH:MM" (local) used with 'start'
-    end_time?: string; // "HH:MM" (local) used with 'end'
-  }
-) {
-  const u = new URL(`${API_BASE_URL}/withings/metrics/heart-rate/intraday`);
-  u.searchParams.set("access_token", accessToken);
-
-  if (opts?.minutes != null) {
-    u.searchParams.set("minutes", String(opts.minutes));
-  } else {
-    if (opts?.start) u.searchParams.set("start", opts.start);
-    if (opts?.end) u.searchParams.set("end", opts.end || opts.start!);
-    if (opts?.start_time) u.searchParams.set("start_time", opts.start_time);
-    if (opts?.end_time) u.searchParams.set("end_time", opts.end_time);
-  }
-
-  const r = await fetch(u.toString(), { cache: "no-store" });
-  const d = await r.json();
-  if (!r.ok) throw new Error(d?.detail || "withings hr intraday failed");
-  return d as {
-    latest?: { ts: number; bpm: number };
-    items: { ts: number; bpm: number }[];
-    window?: { start_utc: number; end_utc: number };
-  };
-}
-
 export async function withingsSpO2(
   accessToken: string,
   start?: string,
@@ -414,5 +399,64 @@ export async function withingsTemperature(
     start: string; // NEW
     end: string; // NEW
     items: { ts: number; body_c: number | null; skin_c: number | null }[]; // NEW
+    latest: { ts: number; body_c: number | null; skin_c: number | null } | null;
   }; // NEW
+}
+
+export async function withingsECG(
+  accessToken: string,
+  start: string,
+  end: string,
+  tz: string = "Europe/Rome",
+  limit: number = 25
+) {
+  const u = new URL(`${API_BASE_URL}/withings/metrics/ecg`);
+  u.searchParams.set("access_token", accessToken);
+  u.searchParams.set("start", start);
+  u.searchParams.set("end", end);
+  u.searchParams.set("tz", tz);
+  u.searchParams.set("limit", String(limit));
+
+  const r = await fetch(u.toString());
+  const d = await r.json();
+  if (!r.ok) throw new Error(d?.detail || "withings ECG failed");
+  return d as {
+    start: string;
+    end: string;
+    tz: string;
+    count: number;
+    items: {
+      signalid: number | null;
+      ts: number;
+      time_iso: string;
+      heart_rate: number | null;
+      afib: boolean | number | null;
+      classification: string | number | null;
+      deviceid: string | null;
+      model: number | string | null;
+    }[];
+    latest: {
+      signalid: number | null;
+      ts: number;
+      time_iso: string;
+      heart_rate: number | null;
+      afib: boolean | number | null;
+      classification: string | number | null;
+      deviceid: string | null;
+      model: number | string | null;
+    } | null;
+  };
+}
+
+export async function withingsHRContinuous(accessToken: string, minutes = 5) {
+  const u = new URL(`${API_BASE_URL}/withings/metrics/heart-rate/continuous`);
+  u.searchParams.set("access_token", accessToken);
+  u.searchParams.set("minutes", String(minutes));
+  const r = await fetch(u.toString());
+  const d = await r.json();
+  if (!r.ok) throw new Error(d?.detail || "withings HR continuous failed");
+  return d as {
+    items: { ts: number; bpm: number }[];
+    latest: { ts: number; bpm: number } | null;
+  };
 }

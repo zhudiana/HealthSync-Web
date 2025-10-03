@@ -1,8 +1,7 @@
 # app/withings/metrics.py
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 import requests
 from typing import Optional, List, Dict, Tuple
-from app.withings.utils.withings_parser import parse_withings_measure_group
 from datetime import datetime, timedelta,time, date as _date
 from zoneinfo import ZoneInfo
 
@@ -12,6 +11,7 @@ router = APIRouter(tags=["Withings Metrics"], prefix="/withings/metrics")
 MEASURE_URL = "https://wbsapi.withings.net/measure"
 MEASURE_V2_URL = "https://wbsapi.withings.net/v2/measure"
 SLEEP_V2_URL = "https://wbsapi.withings.net/v2/sleep"
+HEART_V2_URL = "https://wbsapi.withings.net/v2/heart"
 
 def _auth(access_token: str) -> dict:
     return {"Authorization": f"Bearer {access_token}"}
@@ -32,8 +32,6 @@ def _post(url: str, headers: dict, data: dict, timeout: int = 30):
 
 
 def _user_tz(headers) -> ZoneInfo:
-    # call Withings user/profile endpoint once and cache per access_token/user_id
-    # tz_str = response["body"]["profile"]["timezone"]  # example field; store wherever you keep it
     tz_str = "America/Argentina/Cordoba"  # <- fetched dynamically
     try:
         return ZoneInfo(tz_str)
@@ -43,6 +41,7 @@ def _user_tz(headers) -> ZoneInfo:
 
 @router.get("/daily")
 def daily_metrics(
+    response: Response,
     access_token: str,
     date: str = Query(default=None, description="YYYY-MM-DD"),
     fallback_days: int = Query(3, ge=0, le=14, description="Look back if empty"),
@@ -52,7 +51,7 @@ def daily_metrics(
     Withings daily snapshot:
       - steps, distanceKm, (optional calories), sleepHours
       - uses daily roll-up when present
-      - fills/overrides with intraday sums for the requested day window in user TZ
+      - ALWAYS fills/overrides with intraday for 'today' in user TZ
       - robust intraday parsing (list, epoch->object, metric->epoch->number)
     """
     if not date:
@@ -61,22 +60,23 @@ def daily_metrics(
     headers = _auth(access_token)
 
     def fetch_for(dstr: str):
-        steps = None
-        calories = None
-        distance_km = None
-        tzname = None
-        act_json = intr_json = None
-        slp_json = None
+        steps: Optional[int] = None
+        calories: Optional[float] = None
+        distance_km: Optional[float] = None
+        tzname: Optional[str] = None
+        act_json = intr_json = slp_json = None
 
-        # ---------- Daily roll-up ----------
+        # ---------- 1) Daily roll-up ----------
         act_payload = {
             "action": "getactivity",
             "startdateymd": dstr,
             "enddateymd": dstr,
             "data_fields": "steps,distance,calories,totalcalories,timezone",
-            "timezone": "Europe/Rome",  # ensure day window aligns to user
+            # NOTE: we don't force timezone here; we read the account's tz from the response
         }
         act_res = requests.post(MEASURE_V2_URL, headers=headers, data=act_payload, timeout=30)
+        if act_res.status_code == 401:
+            raise HTTPException(status_code=401, detail="Access token expired or invalid")
         if act_res.status_code == 200:
             act_json = act_res.json() or {}
             if act_json.get("status") == 0:
@@ -84,45 +84,44 @@ def daily_metrics(
                 total_steps = 0
                 total_dist_m = 0.0
                 for a in activities:
-                    tzname = tzname or a.get("timezone")
+                    if not tzname:
+                        tzname = a.get("timezone")
                     s = a.get("steps")
-                    d_m = a.get("distance")
+                    d_m = a.get("distance")    # meters
                     c = a.get("calories")
                     if isinstance(s, (int, float)):
                         total_steps += int(s)
                     if isinstance(d_m, (int, float)):
-                        total_dist_m += float(d_m)  # meters
+                        total_dist_m += float(d_m)
                     if calories is None and isinstance(c, (int, float)):
-                        calories = c
+                        calories = float(c)
                 if total_steps > 0:
                     steps = total_steps
                 if total_dist_m > 0:
-                    distance_km = round(total_dist_m / 1000.0, 2)  # meters -> km
+                    distance_km = round(total_dist_m / 1000.0, 2)
 
-        # Resolve timezone for intraday window
         try:
-            tz = ZoneInfo(tzname) if tzname else ZoneInfo("Europe/Rome")
+            tz = ZoneInfo(tzname or "Europe/Rome")
         except Exception:
             tz = ZoneInfo("UTC")
 
-        # ---------- Intraday fill for the requested day ----------
-        # Build [start, end) for the entire requested date in that TZ
+        # Build the day window in that TZ
         day_dt = datetime.fromisoformat(dstr).date()
         start_dt = datetime.combine(day_dt, time(0, 0, 0)).replace(tzinfo=tz)
         end_dt = start_dt + timedelta(days=1)
 
-        # If the requested date is today, cap end at "now" in TZ
+        # ---------- 2) Intraday (ALWAYS for 'today') ----------
         now_tz = datetime.now(tz)
-        end_for_query = min(now_tz, end_dt) if day_dt == now_tz.date() else end_dt
+        is_today = (day_dt == now_tz.date())
+        end_for_query = min(now_tz, end_dt) if is_today else end_dt
 
-        # Use intraday whenever roll-up is missing/partial (steps None/0 or distance None)
-        if (steps is None or steps == 0) or (distance_km is None):
+        if is_today or (steps is None or steps == 0) or (distance_km is None):
             intr_payload = {
                 "action": "getintradayactivity",
                 "startdate": int(start_dt.timestamp()),
                 "enddate": int(end_for_query.timestamp()),
                 "data_fields": "steps,distance",
-                "timezone": "Europe/Rome",
+                # NOTE: do NOT pass 'timezone' here; not required.
             }
             intr_res = requests.post(MEASURE_V2_URL, headers=headers, data=intr_payload, timeout=30)
             if intr_res.status_code == 200:
@@ -148,13 +147,10 @@ def daily_metrics(
                         for it in series or []:
                             add_pair(it or {})
                     elif isinstance(series, dict):
-                        # Two possibilities:
-                        # (A) { "epoch": {"steps":..,"distance":..}, ... }
-                        # (B) { "steps": {"epoch": n, ...}, "distance": {"epoch": m, ...} }
                         keys = list(series.keys())
                         looks_like_metrics = all(
-                            isinstance(series[k], dict) and
-                            all(isinstance(v, (int, float)) for v in series[k].values())
+                            isinstance(series.get(k), dict) and
+                            all(isinstance(v, (int, float)) for v in (series[k] or {}).values())
                             for k in keys
                         )
                         if looks_like_metrics:
@@ -165,17 +161,17 @@ def daily_metrics(
                                 if isinstance(v, (int, float)):
                                     intr_dist_m += float(v)
                         else:
-                            for _k, v in series.items():
+                            for _k, v in (series or {}).items():
                                 add_pair(v)
 
-                    # Merge: prefer higher of daily vs intraday
+                    # Merge with roll-up using max (prevents going backwards)
                     if intr_steps > 0:
                         steps = max(int(steps or 0), intr_steps)
                     if intr_dist_m > 0:
                         distance_km = max(float(distance_km or 0.0), round(intr_dist_m / 1000.0, 2))
 
-        # ---------- Sleep (unchanged) ----------
-        sleep_hours = None
+        # ---------- 3) Sleep summary (unchanged) ----------
+        sleep_hours: Optional[float] = None
         slp_payload = {
             "action": "getsummary",
             "startdateymd": dstr,
@@ -191,9 +187,9 @@ def daily_metrics(
                 for item in series:
                     data = item.get("data") or {}
                     if isinstance(data.get("totalsleepduration"), (int, float)):
-                        total_sec += data["totalsleepduration"]
+                        total_sec += int(data["totalsleepduration"])
                     elif isinstance(data.get("asleepduration"), (int, float)):
-                        total_sec += data["asleepduration"]
+                        total_sec += int(data["asleepduration"])
                 sleep_hours = round(total_sec / 3600.0, 2) if total_sec else None
 
         resp = {
@@ -207,7 +203,7 @@ def daily_metrics(
             resp["raw"] = {"activity": act_json, "intraday": intr_json, "sleep": slp_json}
         return resp
 
-    def _has_any(r):
+    def _has_any(r: dict) -> bool:
         return any(r.get(k) is not None for k in ("steps", "distanceKm"))
 
     # Try requested date
@@ -221,10 +217,12 @@ def daily_metrics(
             r2 = fetch_for(cand)
             if _has_any(r2):
                 r2["fallbackFrom"] = date
+                response.headers["Cache-Control"] = "no-store"
                 return r2
 
+    # Prevent browser/CDN caching of this JSON
+    response.headers["Cache-Control"] = "no-store"
     return result
-
 
 
 @router.get("/overview")
@@ -531,7 +529,6 @@ def heart_rate_intraday(
     return resp
 
 
-# -------- Oxygen Saturation (SpO₂) --------
 @router.get("/spo2")
 def spo2(access_token: str,
          start: Optional[str] = Query(None, description="YYYY-MM-DD"),
@@ -561,39 +558,57 @@ def spo2(access_token: str,
     return {"items": items}
 
 
-# -------- Body & Skin Temperature --------
+
 @router.get("/temperature")
-def temperature(access_token: str,
-                start: str = Query(..., description="YYYY-MM-DD"),
-                end: str = Query(..., description="YYYY-MM-DD")):
+def temperature(
+    access_token: str,
+    start: str = Query(..., description="YYYY-MM-DD"),
+    end: str   = Query(..., description="YYYY-MM-DD"),
+    tz: str    = Query("UTC", description="IANA tz like Europe/Rome"),
+):
     """
-    Range query for body_temp (71/12) and skin_temp (73), values in °C.
-    Returns daily latest for each day in window when available.
+    Manual body temperature (attrib=2), °C.
+    Always returns newest entry first.
     """
+    from zoneinfo import ZoneInfo
+    import datetime as dt
+
     headers = _auth(access_token)
-    payload = {"action":"getmeas","meastype":"71,73,12","category":1,"startdateymd":start,"enddateymd":end}
+    payload = {
+        "action": "getmeas",
+        "meastype": "71",           # body temp
+        "startdateymd": start,
+        "enddateymd": end,
+    }
     j = _post(MEASURE_URL, headers, payload)
-    if not j:
-        return {"start": start, "end": end, "items": []}
+
     items = []
-    for g in (j.get("body") or {}).get("measuregrps", []):
+    for g in (j or {}).get("body", {}).get("measuregrps", []):
+        if g.get("attrib") != 2:     # manual only
+            continue
         ts = g.get("date")
-        body_c = None
-        skin_c = None
         for m in g.get("measures", []):
-            v = m.get("value"); u = m.get("unit",0)  # noqa: E702
-            val = v * (10 ** u) if isinstance(v,(int,float)) and isinstance(u,(int,float)) else None
-            t = m.get("type")
-            if t in (71, 12) and val is not None:
-                body_c = val
-            if t == 73 and val is not None:
-                skin_c = val
-        if body_c is not None or skin_c is not None:
-            items.append({"ts": ts, "body_c": body_c, "skin_c": skin_c})
-    return {"start": start, "end": end, "items": items}
+            if m.get("type") == 71:
+                v, u = m.get("value"), m.get("unit", 0)
+                val = v * (10 ** u)
+                items.append({
+                    "ts": ts,
+                    "date_local": dt.datetime.fromtimestamp(ts, ZoneInfo(tz)).isoformat(),
+                    "body_c": val,
+                })
+
+    # sort newest first
+    items.sort(key=lambda x: x["ts"], reverse=True)
+
+    return {
+        "start": start,
+        "end": end,
+        "tz": tz,
+        "items": items,
+        "latest": items[0] if items else None
+    }
 
 
-# -------- Sleep summary (hours) --------
 @router.get("/sleep")
 def sleep_summary(access_token: str,
                   date: str = Query(default=None, description="YYYY-MM-DD (defaults to today)")):
@@ -624,23 +639,163 @@ def sleep_summary(access_token: str,
     return {"date": date, "sleepHours": hours}
 
 
-@router.get("/test-measures")
-def test_measures(access_token: str):
-    params = {"action": "getmeas"}
-    headers = {"Authorization": f"Bearer {access_token}"}
 
-    response = requests.post(
-        "https://wbsapi.withings.net/measure",
-        data=params,
-        headers=headers,
-        timeout=30
-    )
+@router.get("/ecg")
+def ecg_list(
+    access_token: str,
+    start: Optional[str] = Query(None, description="YYYY-MM-DD (default: 7 days ago)"),
+    end: Optional[str]   = Query(None, description="YYYY-MM-DD (default: today)"),
+    tz: str              = Query("Europe/Rome", description="IANA timezone for window"),
+    limit: int           = Query(25, ge=1, le=200, description="Max ECG items"),
+):
+    """
+    List ECG recordings (newest first) within the [start,end] local-day window.
+    Returns minimal normalized fields + `latest` convenience.
+    """
+    # Defaults: last 7 days in local tz
+    try:
+        z = ZoneInfo(tz)
+    except Exception:
+        z = ZoneInfo("Europe/Rome")
 
-    if response.status_code != 200:
-        return {"error": response.text}
+    today_local = datetime.now(z).date()
+    start_day = datetime.fromisoformat(start).date() if start else (today_local - timedelta(days=7))
+    end_day   = datetime.fromisoformat(end).date()   if end   else today_local
+    if end_day < start_day:
+        start_day, end_day = end_day, start_day
 
-    data = response.json()
-    measuregrps = data.get("body", {}).get("measuregrps", [])
-    parsed = parse_withings_measure_group(measuregrps) 
+    start_epoch = int(datetime.combine(start_day, time(0, 0, 0), tzinfo=z).timestamp())
+    end_epoch   = int(datetime.combine(end_day,   time(23, 59, 59), tzinfo=z).timestamp())
 
-    return {"raw": data, "parsed": parsed}
+    headers = _auth(access_token)
+    j = _post(HEART_V2_URL, headers, {
+        "action": "list",
+        "startdate": start_epoch,
+        "enddate": end_epoch,
+    })
+    series = ((j or {}).get("body") or {}).get("series") or []
+
+    items: List[Dict] = []
+    for s in series:
+        # Robust field extraction across possible shapes
+        signalid = s.get("signalid") or s.get("id")
+        ts = s.get("timestamp") or s.get("startdate") or s.get("time")
+        if not isinstance(ts, (int, float)):
+            continue
+        hr = s.get("heart_rate") or s.get("hr")
+        afib = s.get("afib") or s.get("is_afib")
+        cls = s.get("classification") or s.get("algo_result")
+        items.append({
+            "signalid": signalid,
+            "ts": int(ts),
+            "time_iso": datetime.utcfromtimestamp(int(ts)).isoformat() + "Z",
+            "heart_rate": hr,
+            "afib": afib,
+            "classification": cls,
+            "deviceid": s.get("deviceid"),
+            "model": s.get("model"),
+        })
+
+    # Newest first + limit
+    items.sort(key=lambda x: x["ts"], reverse=True)
+    if len(items) > limit:
+        items = items[:limit]
+
+    return {
+        "start": start or start_day.isoformat(),
+        "end": end or end_day.isoformat(),
+        "tz": tz,
+        "count": len(items),
+        "latest": (items[0] if items else None),
+        "items": items,
+    }
+
+
+@router.get("/hrv")
+def hrv_nightly(
+    access_token: str,
+    # By default: try today; if empty we’ll also look at yesterday (common for nightly data)
+    start: Optional[str] = Query(None, description="YYYY-MM-DD (default: today)"),
+    end: Optional[str]   = Query(None, description="YYYY-MM-DD (default: start)"),
+    tz: str              = Query("Europe/Rome", description="IANA timezone for local days"),
+    fallback_yesterday: int = Query(1, ge=0, le=1, description="If today empty, also fetch yesterday")
+):
+    """
+    Nightly HRV from Withings Sleep v2 summary.
+    Returns per-day RMSSD (ms) and, if present, SDNN (ms).
+    Availability depends on device/feature; missing days return no item.
+    """
+    try:
+        z = ZoneInfo(tz)
+    except Exception:
+        z = ZoneInfo("Europe/Rome")
+
+    # Build default day window in user's tz
+    from datetime import datetime as _dt, timedelta as _td
+    today_local = _dt.now(z).date()
+    if not start:
+        start = today_local.isoformat()
+    if not end:
+        end = start
+
+    # Optionally extend to yesterday if today is the only day and ends up empty
+    query_windows = [(start, end)]
+    if fallback_yesterday and start == end:
+        y = ( _dt.fromisoformat(start).date() - _td(days=1) ).isoformat()
+        query_windows.append((y, y))
+
+    headers = _auth(access_token)
+
+    def fetch(d0: str, d1: str):
+        payload = {
+            "action": "getsummary",
+            "startdateymd": d0,
+            "enddateymd": d1,
+            # Ask for HR/HRV fields plus sleep duration (not strictly required)
+            "data_fields": "rmssd,sdnn,hr_average,asleepduration,totalsleepduration"
+        }
+        j = _post(SLEEP_V2_URL, headers, payload)
+        items = []
+        if not j:
+            return items
+        for row in ((j.get("body") or {}).get("series") or []):
+            d = row.get("date") or row.get("startdateymd")  # some payloads add 'date'
+            data = row.get("data") or {}
+            rmssd = data.get("rmssd")
+            sdnn  = data.get("sdnn")
+            hravg = data.get("hr_average")
+            # Only add when we have at least RMSSD or SDNN
+            if isinstance(rmssd, (int, float)) or isinstance(sdnn, (int, float)):
+                items.append({
+                    "date": d,
+                    "rmssd_ms": float(rmssd) if isinstance(rmssd, (int, float)) else None,
+                    "sdnn_ms":  float(sdnn)  if isinstance(sdnn,  (int, float)) else None,
+                    "hr_average": float(hravg) if isinstance(hravg, (int, float)) else None,
+                })
+        # Sort by date asc
+        items.sort(key=lambda x: (x.get("date") or ""))
+        return items
+
+    all_items = []
+    for (d0, d1) in query_windows:
+        got = fetch(d0, d1)
+        all_items.extend(got)
+        # If we requested today only and got something, no need to also return yesterday
+        if start == end and got:
+            break
+
+    # De-dup by date (keep last)
+    dedup = {}
+    for it in all_items:
+        dedup[it["date"]] = it
+    items = list(dedup.values())
+    items.sort(key=lambda x: (x.get("date") or ""))
+
+    return {
+        "start": start,
+        "end": end,
+        "tz": tz,
+        "items": items,
+        "latest": (items[-1] if items else None)
+    }
+

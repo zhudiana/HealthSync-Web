@@ -7,15 +7,15 @@ import {
   withingsMetricsDaily,
   withingsSpO2,
   withingsTemperature,
-  withingsHeartRate,
   withingsHeartRateDaily,
-  withingsHeartRateIntraday, // uses the options signature with { minutes }
   metrics as fitbitMetrics,
   withingsWeightLatest,
+  withingsECG,
 } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import Header from "@/components/Header";
 import MetricCard from "@/components/MetricCard";
+import { getUserByAuth, updateUserByAuth } from "@/lib/api";
 
 export default function Dashboard() {
   const { getAccessToken, profile: ctxProfile, provider } = useAuth();
@@ -29,14 +29,26 @@ export default function Dashboard() {
   const [weight, setWeight] = useState<number | null>(null);
   const [calories, setCalories] = useState<number | null>(null);
   const [spo2, setSpo2] = useState<number | null>(null);
+  const [spo2UpdatedAt, setSpo2UpdatedAt] = useState<number | null>(null);
   const [hrv, setHrv] = useState<number | null>(null);
   const [tempVar, setTempVar] = useState<number | null>(null);
+  const [tempUpdatedAt, setTempUpdatedAt] = useState<number | null>(null);
   const [distance, setDistance] = useState<number | null>(null);
   const [avgHR, setAvgHR] = useState<number | null>(null);
   const [hrUpdatedAt, setHrUpdatedAt] = useState<number | null>(null); // epoch seconds
-  const [nowHR, setNowHR] = useState<number | null>(null); // intraday latest
   const [maxHR, setMaxHR] = useState<number | null>(null);
   const [minHR, setMinHR] = useState<number | null>(null);
+  const [ecgHR, setEcgHR] = useState<number | null>(null);
+  const [ecgTime, setEcgTime] = useState<string | null>(null);
+
+  const [appUser, setAppUser] = useState<{
+    display_name: string | null;
+    email: string | null;
+    auth_user_id?: string;
+  } | null>(null);
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState("");
+  const [savingName, setSavingName] = useState(false);
 
   // ---------- helpers ----------
   const ymd = (d = new Date()) => d.toISOString().slice(0, 10);
@@ -161,7 +173,7 @@ export default function Dashboard() {
             if (mounted) setHrv(null);
           }
 
-          // Nightly SpO2 (today else yesterday)
+          // Nightly SpO₂
           try {
             const todayStr = ymd();
             let s = await fitbitMetrics.spo2Nightly(access, todayStr);
@@ -178,7 +190,7 @@ export default function Dashboard() {
             if (mounted) setSpo2(null);
           }
 
-          // Skin temperature variability (nightlyRelative °C)
+          // Skin temperature variability
           try {
             const endStr = ymd();
             const t = await fitbitMetrics.temperature(access, endStr, endStr);
@@ -215,33 +227,59 @@ export default function Dashboard() {
             setSleepHours(d.sleepHours ?? null);
             setDistance(d.distanceKm ?? null);
 
-            // ---- Withings extras (SpO2 + Temperature) ----
+            // ---- ECG ----
             const todayStr = ymd();
+            withingsECG(access, todayStr, todayStr, "Europe/Rome", 1)
+              .then((e) => {
+                if (!mounted) return;
+                if (e?.latest) {
+                  setEcgHR(e.latest.heart_rate ?? null);
+                  setEcgTime(e.latest.time_iso ?? null);
+                } else {
+                  setEcgHR(null);
+                  setEcgTime(null);
+                }
+              })
+              .catch(() => {
+                if (mounted) {
+                  setEcgHR(null);
+                  setEcgTime(null);
+                }
+              });
 
+            // ---- SpO₂ ----
             withingsSpO2(access)
               .then((s) => {
                 if (!mounted) return;
                 setSpo2(s?.latest?.percent ?? null);
+                setSpo2UpdatedAt(s?.latest?.ts ?? null);
               })
               .catch(() => {
-                if (mounted) setSpo2(null);
+                if (mounted) {
+                  setSpo2(null);
+                  setSpo2UpdatedAt(null);
+                }
               });
 
+            // ---- Temperature ----
             withingsTemperature(access, todayStr, todayStr)
               .then((t) => {
                 if (!mounted) return;
-                const item = t?.items?.[t.items.length - 1];
+                const item = t?.latest;
                 const skin = item?.skin_c ?? null;
                 const body = item?.body_c ?? null;
                 setTempVar(body ?? skin ?? null);
+                setTempUpdatedAt(item?.ts ?? null);
               })
               .catch(() => {
-                if (mounted) setTempVar(null);
+                if (mounted) {
+                  setTempVar(null);
+                  setTempUpdatedAt(null);
+                }
               });
 
-            // ---- Withings Heart Rate (Daily avg + timestamp) ----
+            // ---- Heart Rate ----
             try {
-              const todayStr = ymd();
               let daily = await withingsHeartRateDaily(access, todayStr);
               if (
                 daily?.hr_average == null &&
@@ -254,7 +292,7 @@ export default function Dashboard() {
                 setAvgHR(daily?.hr_average ?? null);
                 setMaxHR(daily?.hr_max ?? null);
                 setMinHR(daily?.hr_min ?? null);
-                setHrUpdatedAt(daily?.updatedAt ?? null); // epoch seconds
+                setHrUpdatedAt(daily?.updatedAt ?? null);
               }
             } catch {
               if (mounted) {
@@ -264,34 +302,8 @@ export default function Dashboard() {
                 setHrUpdatedAt(null);
               }
             }
-
-            // Initial “Now” (intraday latest) — use rolling last 30 min
-            try {
-              const intra = await withingsHeartRateIntraday(access, {
-                minutes: 30,
-              });
-              const latest =
-                intra?.latest ??
-                (intra?.items?.length
-                  ? intra.items[intra.items.length - 1]
-                  : null);
-
-              if (mounted) {
-                setNowHR(
-                  typeof latest?.bpm === "number"
-                    ? Math.round(latest.bpm)
-                    : null
-                );
-                setHrUpdatedAt(
-                  typeof latest?.ts === "number" ? latest.ts : null
-                );
-              }
-            } catch {
-              if (mounted) setNowHR(null);
-            }
           } catch {
             if (!mounted) return;
-            // keep placeholders if it fails
             setWeight(null);
             setRestingHR(null);
             setSteps(null);
@@ -303,7 +315,7 @@ export default function Dashboard() {
 
           if (mounted) {
             setInfo(null);
-            setHrv(null); // HRV not available via Withings in same way; keep null
+            setHrv(null);
           }
         }
       } catch (e: any) {
@@ -318,50 +330,7 @@ export default function Dashboard() {
     };
   }, [provider, getAccessToken]);
 
-  // ---------- live-ish Withings intraday HR poller ----------
-  useEffect(() => {
-    if (provider !== "withings") return;
-
-    let timer: number | null = null;
-    let stopped = false;
-
-    const fetchNowHr = async () => {
-      if (stopped) return;
-      try {
-        const access = await getAccessToken();
-        if (!access) return;
-
-        // Ask backend for the last 30 minutes up to now
-        const res = await withingsHeartRateIntraday(access, { minutes: 30 });
-        const latest =
-          res?.latest ??
-          (res?.items?.length ? res.items[res.items.length - 1] : null);
-
-        setNowHR(
-          typeof latest?.bpm === "number" ? Math.round(latest.bpm) : null
-        );
-        setHrUpdatedAt(typeof latest?.ts === "number" ? latest.ts : null);
-      } catch {
-        // keep last values; avoid noisy errors
-      }
-    };
-
-    // prime + interval + refetch on focus/visibility
-    fetchNowHr();
-    timer = window.setInterval(fetchNowHr, 90_000);
-
-    const onFocus = () => fetchNowHr();
-    window.addEventListener("visibilitychange", onFocus);
-    window.addEventListener("focus", onFocus);
-
-    return () => {
-      stopped = true;
-      if (timer) window.clearInterval(timer);
-      window.removeEventListener("visibilitychange", onFocus);
-      window.removeEventListener("focus", onFocus);
-    };
-  }, [provider, getAccessToken]);
-
+  // ---------- render ----------
   if (err) {
     return (
       <>
@@ -427,7 +396,7 @@ export default function Dashboard() {
             <MetricCard
               title="Oxygen Saturation (SpO₂)"
               value={fmtNumber(spo2, 1)}
-              sub="%"
+              sub={spo2UpdatedAt ? `% • ${fmtTimeHM(spo2UpdatedAt)}` : "%"}
             />
           ) : (
             <MetricCard
@@ -440,7 +409,7 @@ export default function Dashboard() {
           <MetricCard
             title={tempLabel}
             value={fmtNumber(tempVar, 1)}
-            sub="°C"
+            sub={tempUpdatedAt ? `°C • ${fmtTimeHM(tempUpdatedAt)}` : "°C"}
           />
 
           {provider === "withings" ? (
@@ -448,7 +417,7 @@ export default function Dashboard() {
               <MetricCard
                 title="Average Heart Rate"
                 value={avgHR != null ? Math.round(avgHR) : "—"}
-                sub="bpm"
+                sub={hrUpdatedAt ? `bpm • ${fmtTimeHM(hrUpdatedAt)}` : "bpm"}
               />
               <MetricCard
                 title="Max Heart Rate (Today)"
@@ -460,15 +429,9 @@ export default function Dashboard() {
                 value={minHR != null ? Math.round(minHR) : "—"}
                 sub="bpm"
               />
-              {/* <MetricCard
-                title="Heart Rate (Now)"
-                value={nowHR != null ? Math.round(nowHR) : "—"}
-                sub={hrUpdatedAt ? `bpm • ${fmtTimeHM(hrUpdatedAt)}` : "bpm"}
-              /> */}
             </>
           ) : (
             <>
-              {/* Fitbit cards unchanged */}
               <MetricCard
                 title="Resting Heart Rate (RHR)"
                 value={restingHR ?? "—"}
@@ -480,6 +443,21 @@ export default function Dashboard() {
                 sub="ms"
               />
             </>
+          )}
+
+          {provider === "withings" && (
+            <MetricCard
+              title="ECG (Latest)"
+              value={ecgHR != null ? Math.round(ecgHR) : "—"}
+              sub={
+                ecgTime
+                  ? `bpm • ${new Date(ecgTime).toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}`
+                  : "bpm"
+              }
+            />
           )}
         </section>
       </main>

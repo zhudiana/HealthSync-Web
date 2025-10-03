@@ -8,6 +8,15 @@ from app.config import WITHINGS_CLIENT_ID, WITHINGS_REDIRECT_URI, WITHINGS_CLIEN
 import time
 import json
 import os
+from fastapi import Depends
+from sqlalchemy.orm import Session
+from app.dependencies import get_db, get_current_user
+from app.db import models, schemas as db_schemas
+from app.db.crud_withings import upsert_withings_account
+from datetime import datetime, timedelta, timezone
+from app.db.crud_user import get_or_create_user_from_withings
+from app.auth.session import create_session_token  # NEW
+from app.config import APP_SECRET_KEY    
 
 
 router = APIRouter()
@@ -362,36 +371,78 @@ def withings_profile(access_token: str):
 
 
 @router.post("/withings/exchange")
-def withings_exchange(payload: Dict[str, str] = Body(...)):
-    """
-    SPA calls this after being redirected to /auth/callback with ?code&state.
-    We validate `state` that we created in /withings/login, then exchange code.
-    """
+def withings_exchange(
+    payload: Dict[str, str] = Body(...),
+    db: Session = Depends(get_db),
+):
     code = payload.get("code")
     state = payload.get("state")
-
     if not code or not state:
         raise HTTPException(status_code=400, detail="Missing code or state")
 
-    # load latest sessions from file (same as in /withings/callback)
+    # validate state
     global withings_sessions
     withings_sessions = load_sessions()
-
     if state not in withings_sessions:
         raise HTTPException(status_code=400, detail="Invalid or expired state parameter")
 
-    # do the token exchange (you already implemented this)
-    tokens = exchange_code_for_tokens(code)
+    tokens = exchange_code_for_tokens(code)  # { access_token, refresh_token, expires_in, scope, token_type, userid, ... }
 
-    # clean up this state so it can't be reused
+    # cleanup state
     try:
         del withings_sessions[state]
         save_sessions(withings_sessions)
     except Exception:
         pass
 
-    return {"tokens": tokens}
+    # ---- Build payload ----
+    access_token = tokens.get("access_token")
+    refresh_token = tokens.get("refresh_token")
+    scope = tokens.get("scope")
+    token_type = tokens.get("token_type")
+    userid = str(tokens.get("userid") or "")
+    expires_in = tokens.get("expires_in")
+    expires_at = (
+        datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
+        if isinstance(expires_in, (int, float)) else None
+    )
+
+    # fetch profile name
+    try:
+        prof = withings_profile(access_token)
+        full_name = prof.get("fullName")
+    except Exception:
+        full_name = None
+
+    # ---- Create/find your APP user from Withings userid ----
+    user = get_or_create_user_from_withings(db, userid, full_name)
 
 
+    # ---- Upsert Withings account row (no user_id linking yet) ----
+    create_payload = db_schemas.WithingsAccountCreate(
+        withings_user_id=userid,
+        full_name=full_name,
+        email=None,
+        timezone=None,
+        access_token=access_token,
+        refresh_token=refresh_token,
+        scope=scope,
+        token_type=token_type,
+        expires_at=expires_at,
+    )
+    acc = upsert_withings_account(db,user.id, create_payload)
 
-
+    return {
+        "message": "Authorization successful",
+        "account_id": str(acc.id),
+        "withings_user_id": acc.withings_user_id,
+        "full_name": acc.full_name,
+        "app_user": {
+            "id": str(user.id),
+            "auth_user_id": user.auth_user_id,
+            "display_name": user.display_name,
+        },
+        "expires_at": acc.expires_at.isoformat() if acc.expires_at else None,
+        "scope": acc.scope,
+        "tokens": tokens,
+    }

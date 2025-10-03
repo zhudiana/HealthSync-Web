@@ -1,21 +1,65 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, conint
 from datetime import datetime
 from uuid import UUID
 
+# ----------- User Schemas -----------
 
-class UserSchema(BaseModel):
+class UserCreate(BaseModel):
+    auth_user_id: str
+    email: str | None = None
+    display_name: str | None = None
+    hr_min_bpm: conint(ge=30, le=220) | None = 45
+    hr_max_bpm: conint(ge=30, le=220) | None = 120
+
+class UserUpdate(BaseModel):
+    email: str | None = None
+    display_name: str | None = None
+    hr_min_bpm: conint(ge=30, le=220) | None = None
+    hr_max_bpm: conint(ge=30, le=220) | None = None
+
+class UserRead(BaseModel):
     id: UUID
-    email: str
+    auth_user_id: str
+    email: str | None
+    display_name: str | None
+    hr_min_bpm: int
+    hr_max_bpm: int
+    created_at: datetime
+    updated_at: datetime
+    # model_config = ConfigDict(from_attributes=True)
 
     class Config:
         orm_mode = True
 
-class FitbitTokenSchema(BaseModel):
-    id: str
-    user_id: UUID
+
+# ----------- Withings Schemas -----------
+
+class WithingsAccountCreate(BaseModel):
+    withings_user_id: str
+    full_name: str | None = None
+    email: str | None = None  
+    timezone: str | None = None
     access_token: str
     refresh_token: str
-    expires_at: datetime
+    scope: str | None = None
+    token_type: str | None = None
+    expires_at: datetime | None = None
+
+class WithingsAccountRead(BaseModel):
+    id: UUID
+    user_id: UUID
+    withings_user_id: str
+    full_name: str | None
+    email: str | None
+    timezone: str | None
+    access_token: str
+    refresh_token: str
+    scope: str | None
+    token_type: str | None
+    expires_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+    # model_config = ConfigDict(from_attributes=True)
 
     class Config:
         orm_mode = True
