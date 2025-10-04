@@ -11,5 +11,6 @@ FITBIT_CLIENT_ID = os.getenv("FITBIT_CLIENT_ID")
 FITBIT_REDIRECT_URI = os.getenv("FITBIT_REDIRECT_URI")
 FITBIT_CLIENT_SECRET = os.getenv("FITBIT_CLIENT_SECRET")
 
-APP_SECRET_KEY = os.getenv("APP_SECRET_KEY", "dev-insecure-change-me")
+SQLALCHEMY_DATABASE_URL = os.getenv("SQLALCHEMY_DATABASE_URL")
 
+APP_SECRET_KEY = os.getenv("APP_SECRET_KEY", "dev-insecure-change-me")
