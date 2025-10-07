@@ -1,4 +1,4 @@
-from pydantic import BaseModel, conint
+from pydantic import BaseModel, conint, ConfigDict
 from datetime import datetime
 from uuid import UUID
 
@@ -14,22 +14,15 @@ class UserCreate(BaseModel):
 class UserUpdate(BaseModel):
     email: str | None = None
     display_name: str | None = None
-    hr_min_bpm: conint(ge=30, le=220) | None = None
-    hr_max_bpm: conint(ge=30, le=220) | None = None
 
 class UserRead(BaseModel):
     id: UUID
     auth_user_id: str
     email: str | None
     display_name: str | None
-    hr_min_bpm: int
-    hr_max_bpm: int
     created_at: datetime
     updated_at: datetime
-    # model_config = ConfigDict(from_attributes=True)
-
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ----------- Withings Schemas -----------
@@ -39,7 +32,6 @@ class WithingsAccountCreate(BaseModel):
     full_name: str | None = None
     email: str | None = None  
     timezone: str | None = None
-    access_token: str
     refresh_token: str
     scope: str | None = None
     token_type: str | None = None
@@ -52,14 +44,10 @@ class WithingsAccountRead(BaseModel):
     full_name: str | None
     email: str | None
     timezone: str | None
-    access_token: str
-    refresh_token: str
     scope: str | None
     token_type: str | None
     expires_at: datetime | None
     created_at: datetime
     updated_at: datetime
-    # model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True)
 
-    class Config:
-        orm_mode = True

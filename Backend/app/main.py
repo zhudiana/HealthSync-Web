@@ -2,8 +2,9 @@ from fastapi import FastAPI
 from app.withings.routes import router as withings_router
 from app.fitbit.routes import router as fitbit_router
 from fastapi.middleware.cors import CORSMiddleware
-from app.db import models
-from app.db.database import engine
+import app.db.models
+from app.db.base import Base
+from app.db.engine import engine
 from app.routes import users as users_routes
 
 
@@ -26,4 +27,4 @@ app.add_middleware(
 
 @app.on_event("startup")
 def create_tables():
-    models.Base.metadata.create_all(bind=engine)
+    Base.metadata.create_all(bind=engine)

@@ -10,13 +10,11 @@ import json
 import os
 from fastapi import Depends
 from sqlalchemy.orm import Session
-from app.dependencies import get_db, get_current_user
-from app.db import models, schemas as db_schemas
-from app.db.crud_withings import upsert_withings_account
+from app.dependencies import get_db
+from app.db.schemas import withings as db_schemas
+from app.db.crud.withings import upsert_withings_account
 from datetime import datetime, timedelta, timezone
-from app.db.crud_user import get_or_create_user_from_withings
-from app.auth.session import create_session_token  # NEW
-from app.config import APP_SECRET_KEY    
+from app.db.crud.user import get_or_create_user_from_withings   
 
 
 router = APIRouter()
@@ -424,7 +422,7 @@ def withings_exchange(
         full_name=full_name,
         email=None,
         timezone=None,
-        access_token=access_token,
+        # access_token=access_token,
         refresh_token=refresh_token,
         scope=scope,
         token_type=token_type,

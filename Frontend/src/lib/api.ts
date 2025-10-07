@@ -447,16 +447,3 @@ export async function withingsECG(
     } | null;
   };
 }
-
-export async function withingsHRContinuous(accessToken: string, minutes = 5) {
-  const u = new URL(`${API_BASE_URL}/withings/metrics/heart-rate/continuous`);
-  u.searchParams.set("access_token", accessToken);
-  u.searchParams.set("minutes", String(minutes));
-  const r = await fetch(u.toString());
-  const d = await r.json();
-  if (!r.ok) throw new Error(d?.detail || "withings HR continuous failed");
-  return d as {
-    items: { ts: number; bpm: number }[];
-    latest: { ts: number; bpm: number } | null;
-  };
-}

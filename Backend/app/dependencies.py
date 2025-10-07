@@ -1,7 +1,8 @@
 from fastapi import Depends, Header, HTTPException
 from sqlalchemy.orm import Session
-from app.db.database import SessionLocal
-from app.db import models
+from app.db.engine import SessionLocal
+# from app.db.models import user as user_models
+from app.db.models.user import User
 from app.auth.session import decode_session_token
 from app.config import APP_SECRET_KEY
 
@@ -25,7 +26,7 @@ def _extract_bearer(auth_header: str | None) -> str:
 async def get_current_user(
     authorization: str | None = Header(default=None, alias="Authorization"),
     db: Session = Depends(get_db),
-) -> models.User:
+) -> User:
     """
     Resolve the current app user from the app session token (JWT).
     The token is issued after Withings OAuth in your callback route and
@@ -43,7 +44,7 @@ async def get_current_user(
     if not user_id:
         raise HTTPException(status_code=401, detail="Malformed token (missing 'sub')")
 
-    user = db.query(models.User).filter(models.User.id == user_id).first()
+    user = db.query(User).filter(User.id == user_id).first()
     if not user:
         # Token is valid but user was deleted in the meantime.
         raise HTTPException(status_code=401, detail="User not found")

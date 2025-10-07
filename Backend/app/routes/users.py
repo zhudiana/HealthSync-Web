@@ -1,25 +1,26 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.dependencies import get_db, get_current_user
-from app.db import models, schemas
+from app.db.models import user as user_models, withings_account as withings_models
+from app.db.schemas import withings as schemas
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
 @router.get("/me", response_model=schemas.UserRead)
-def get_me(current: models.User = Depends(get_current_user)):
+def get_me(current: user_models = Depends(get_current_user)):
     return current
 
 @router.patch("/me", response_model=schemas.UserRead)
 def update_me(payload: schemas.UserUpdate,
               db: Session = Depends(get_db),
-              current: models.User = Depends(get_current_user)):
+              current: user_models = Depends(get_current_user)):
 
     if payload.email is not None:
         current.email = payload.email
     if payload.display_name is not None:
         current.display_name = payload.display_name
         # optional mirror: fill Withings full_name if empty
-        acc = db.query(models.WithingsAccount).filter(models.WithingsAccount.user_id == current.id).first()
+        acc = db.query(withings_models).filter(withings_models.user_id == current.id).first()
         if acc and not (acc.full_name and acc.full_name.strip()):
             acc.full_name = payload.display_name
             db.add(acc)
@@ -43,14 +44,14 @@ def update_me(payload: schemas.UserUpdate,
 
 @router.get("/by-auth/{auth_user_id}", response_model=schemas.UserRead)
 def get_user_by_auth(auth_user_id: str, db: Session = Depends(get_db)):
-    user = db.query(models.User).filter(models.User.auth_user_id == auth_user_id).first()
+    user = db.query(user_models).filter(user_models.auth_user_id == auth_user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return user
 
 @router.patch("/by-auth/{auth_user_id}", response_model=schemas.UserRead)
 def update_user_by_auth(auth_user_id: str, payload: schemas.UserUpdate, db: Session = Depends(get_db)):
-    user = db.query(models.User).filter(models.User.auth_user_id == auth_user_id).first()
+    user = db.query(user_models).filter(user_models.auth_user_id == auth_user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
