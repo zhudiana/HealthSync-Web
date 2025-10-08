@@ -3,6 +3,7 @@ from app.withings.routes import router as withings_router
 from app.fitbit.routes import router as fitbit_router
 from fastapi.middleware.cors import CORSMiddleware
 import app.db.models
+from app.db.models import User, WithingsAccount, MetricDaily, MetricIntraday
 from app.db.base import Base
 from app.db.engine import engine
 from app.routes import users as users_routes

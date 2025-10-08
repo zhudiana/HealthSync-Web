@@ -50,3 +50,19 @@ async def get_current_user(
         raise HTTPException(status_code=401, detail="User not found")
 
     return user
+
+async def get_current_user_optional(
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    db: Session = Depends(get_db),
+) -> User | None:
+    if not authorization:
+        return None
+    try:
+        raw_token = authorization.split()[1]
+        payload = decode_session_token(raw_token, secret_key=APP_SECRET_KEY)
+        user_id = payload.get("sub")
+        if not user_id:
+            return None
+        return db.query(User).filter(User.id == user_id).first()
+    except Exception:
+        return None

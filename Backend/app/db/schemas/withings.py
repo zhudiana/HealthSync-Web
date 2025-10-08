@@ -1,4 +1,4 @@
-from pydantic import BaseModel, conint, ConfigDict
+from pydantic import BaseModel, ConfigDict
 from datetime import datetime
 from uuid import UUID
 
@@ -8,8 +8,7 @@ class UserCreate(BaseModel):
     auth_user_id: str
     email: str | None = None
     display_name: str | None = None
-    hr_min_bpm: conint(ge=30, le=220) | None = 45
-    hr_max_bpm: conint(ge=30, le=220) | None = 120
+    
 
 class UserUpdate(BaseModel):
     email: str | None = None

@@ -1,9 +1,14 @@
-# app/withings/metrics.py
-from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi import APIRouter, HTTPException, Query, Response, Depends
 import requests
 from typing import Optional, List, Dict, Tuple
 from datetime import datetime, timedelta,time, date as _date
 from zoneinfo import ZoneInfo
+from sqlalchemy.orm import Session
+from app.dependencies import get_db, get_current_user_optional
+from app.db.models import WithingsAccount, User, MetricDaily, MetricIntraday
+from sqlalchemy.dialects.postgresql import insert
+
+
 
 
 router = APIRouter(tags=["Withings Metrics"], prefix="/withings/metrics")
@@ -26,17 +31,152 @@ def _post(url: str, headers: dict, data: dict, timeout: int = 30):
         raise HTTPException(status_code=r.status_code, detail=detail)
     j = r.json() or {}
     if j.get("status") != 0:
-        # Return empty payloads instead of throwing to keep UI resilient
         return None
     return j
 
 
 def _user_tz(headers) -> ZoneInfo:
-    tz_str = "America/Argentina/Cordoba"  # <- fetched dynamically
-    try:
-        return ZoneInfo(tz_str)
-    except Exception:
-        return ZoneInfo("Europe/Rome")
+    return ZoneInfo("Europe/Rome")
+
+
+def _resolve_user_and_tz(
+    db: Session,
+    access_token: str,
+    app_user: User | None = None,
+) -> tuple[User, str]:
+    """
+    Prefer the authenticated app user (if provided via get_current_user).
+    Fallback: derive Withings userid from the access token, then map to our
+    WithingsAccount -> User. Returns (user, tz_string).
+    """
+    if app_user:
+        acc = db.query(WithingsAccount).filter(WithingsAccount.user_id == app_user.id).first()
+        tz = (acc.timezone if acc else None) or "UTC"
+        return app_user, tz
+
+    # Fallback: call Withings to get the user's withings_user_id
+    headers = {"Authorization": f"Bearer {access_token}"}
+    r = requests.post(
+        "https://wbsapi.withings.net/v2/user",
+        headers=headers,
+        data={"action": "getuserslist"},
+        timeout=15,
+    )
+    wid = None
+    if r.status_code == 200:
+        j = r.json() or {}
+        if j.get("status") == 0:
+            users = (j.get("body") or {}).get("users") or []
+            if users:
+                wid = str(users[0].get("id"))
+
+    if not wid:
+        raise HTTPException(status_code=401, detail="Cannot resolve Withings user from access token")
+
+    acc = db.query(WithingsAccount).filter(WithingsAccount.withings_user_id == wid).first()
+    if not acc:
+        raise HTTPException(status_code=404, detail="Linked Withings account not found")
+
+    user = db.query(User).filter(User.id == acc.user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="App user not found")
+
+    return user, (acc.timezone or "UTC")
+
+
+
+def _upsert_daily(
+    db: Session,
+    *,
+    user_id,
+    provider: str,
+    metric: str,
+    date_local,            # datetime.date
+    value: float,
+    unit: str | None,
+    tz: str | None = None,
+    source_updated_at: datetime | None = None,
+):
+    stmt = insert(MetricDaily).values(
+        user_id=user_id,
+        provider=provider,
+        metric=metric,
+        date_local=date_local,
+        value=value,
+        unit=unit,
+        tz=tz,
+        source_updated_at=source_updated_at,
+    )
+    # relies on a unique constraint on (user_id, provider, metric, date_local)
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["user_id", "provider", "metric", "date_local"],
+        set_={
+            "value": stmt.excluded.value,
+            "unit": stmt.excluded.unit,
+            "tz": stmt.excluded.tz,
+            "source_updated_at": stmt.excluded.source_updated_at,
+            "updated_at": datetime.utcnow(),
+        },
+    )
+    db.execute(stmt)
+    db.commit()
+
+
+def _bulk_upsert_intraday(db: Session, rows: list[dict]):
+    if not rows:
+        return
+    # rows: dicts with keys matching MetricIntraday columns
+    stmt = insert(MetricIntraday).values(rows)
+    # unique on (user_id, provider, metric, ts_utc)
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["user_id", "provider", "metric", "ts_utc"],
+        set_={
+            "value": stmt.excluded.value,
+            "unit": stmt.excluded.unit,
+            "date_local": stmt.excluded.date_local,
+            "tz": stmt.excluded.tz,
+            "updated_at": datetime.utcnow(),
+        },
+    )
+    db.execute(stmt)
+    db.commit()
+
+
+def _persist_daily_snapshot(db: Session, access_token: str, app_user: User | None, payload: dict):
+    """Writes steps, distance_km, sleep_hours, calories_total into metrics_daily."""
+    user, tz = _resolve_user_and_tz(db, access_token, app_user)
+    day_local = datetime.fromisoformat(payload["date"]).date()
+
+    def upsert(metric: str, value: float, unit: str | None):
+        stmt = insert(MetricDaily).values(
+            user_id=user.id,
+            provider="withings",
+            metric=metric,
+            date_local=day_local,
+            value=float(value),
+            unit=unit,
+            tz=tz,
+        ).on_conflict_do_update(
+            index_elements=["user_id", "provider", "metric", "date_local"],
+            set_={
+                "value": float(value),
+                "unit": unit,
+                "tz": tz,
+                "updated_at": datetime.utcnow(),
+            },
+        )
+        db.execute(stmt)
+
+    if payload.get("steps") is not None:
+        upsert("steps", payload["steps"], "count")
+    if payload.get("distanceKm") is not None:
+        upsert("distance_km", payload["distanceKm"], "km")
+    if payload.get("sleepHours") is not None:
+        upsert("sleep_hours", payload["sleepHours"], "h")
+    if payload.get("calories") is not None:
+        upsert("calories_total", payload["calories"], "kcal")
+
+    db.commit()
 
 
 @router.get("/daily")
@@ -45,14 +185,15 @@ def daily_metrics(
     access_token: str,
     date: str = Query(default=None, description="YYYY-MM-DD"),
     fallback_days: int = Query(3, ge=0, le=14, description="Look back if empty"),
-    debug: int = Query(0, description="Set 1 to include raw payloads")
+    debug: int = Query(0, description="Set 1 to include raw payloads"),
+    db: Session = Depends(get_db),
+    app_user: User | None = Depends(get_current_user_optional),
 ):
     """
     Withings daily snapshot:
       - steps, distanceKm, (optional calories), sleepHours
-      - uses daily roll-up when present
-      - ALWAYS fills/overrides with intraday for 'today' in user TZ
-      - robust intraday parsing (list, epoch->object, metric->epoch->number)
+      - use roll-up when present, but ALWAYS fill/override with intraday for 'today'
+    Also persists results to metrics_daily (best-effort; UI never breaks).
     """
     if not date:
         date = _date.today().isoformat()
@@ -72,7 +213,6 @@ def daily_metrics(
             "startdateymd": dstr,
             "enddateymd": dstr,
             "data_fields": "steps,distance,calories,totalcalories,timezone",
-            # NOTE: we don't force timezone here; we read the account's tz from the response
         }
         act_res = requests.post(MEASURE_V2_URL, headers=headers, data=act_payload, timeout=30)
         if act_res.status_code == 401:
@@ -121,7 +261,6 @@ def daily_metrics(
                 "startdate": int(start_dt.timestamp()),
                 "enddate": int(end_for_query.timestamp()),
                 "data_fields": "steps,distance",
-                # NOTE: do NOT pass 'timezone' here; not required.
             }
             intr_res = requests.post(MEASURE_V2_URL, headers=headers, data=intr_payload, timeout=30)
             if intr_res.status_code == 200:
@@ -143,7 +282,6 @@ def daily_metrics(
                             intr_dist_m += float(d)
 
                     if isinstance(series, list):
-                        # [{startdate, enddate, steps, distance}, ...]
                         for it in series or []:
                             add_pair(it or {})
                     elif isinstance(series, dict):
@@ -170,7 +308,7 @@ def daily_metrics(
                     if intr_dist_m > 0:
                         distance_km = max(float(distance_km or 0.0), round(intr_dist_m / 1000.0, 2))
 
-        # ---------- 3) Sleep summary (unchanged) ----------
+        # ---------- 3) Sleep summary ----------
         sleep_hours: Optional[float] = None
         slp_payload = {
             "action": "getsummary",
@@ -218,10 +356,22 @@ def daily_metrics(
             if _has_any(r2):
                 r2["fallbackFrom"] = date
                 response.headers["Cache-Control"] = "no-store"
+                # best-effort persist (fallback day)
+                try:
+                    _persist_daily_snapshot(db, access_token, app_user, r2)
+                except Exception:
+                    pass
                 return r2
 
-    # Prevent browser/CDN caching of this JSON
+    # Prevent browser/CDN caching
     response.headers["Cache-Control"] = "no-store"
+
+    # Persist the requested day (best-effort)
+    try:
+        _persist_daily_snapshot(db, access_token, app_user, result)
+    except Exception:
+        pass
+
     return result
 
 

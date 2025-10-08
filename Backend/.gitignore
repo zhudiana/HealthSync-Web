@@ -1,3 +1,37 @@
-.env
-venv/
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*$py.class
+# Python
+**/__pycache__/
+**/*.py[cod]
+**/*$py.class
 
+# Environments
+.venv/
+venv/
+env/
+ENV/
+
+# Packaging
+build/
+dist/
+*.egg-info/
+
+# Logs & coverage
+*.log
+.coverage*
+htmlcov/
+
+# IDE/editor
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local config & secrets
+.env
+.env.*
+*.sqlite3
