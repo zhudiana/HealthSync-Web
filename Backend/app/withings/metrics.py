@@ -948,4 +948,3 @@ def hrv_nightly(
         "items": items,
         "latest": (items[-1] if items else None)
     }
-

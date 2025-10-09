@@ -39,6 +39,12 @@ export default function AuthCallback() {
           data = await exchangeCode(code, state);
         }
 
+        const sessionJwt = data?.session?.token;
+        if (sessionJwt) {
+          tokens.setSession(sessionJwt);
+          tokens.clearState("withings");
+        }
+
         const access = data?.tokens?.access_token ?? data?.access_token;
         const refresh = data?.tokens?.refresh_token ?? data?.refresh_token;
         const userId =

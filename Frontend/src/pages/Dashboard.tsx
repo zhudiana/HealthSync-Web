@@ -212,10 +212,15 @@ export default function Dashboard() {
         } else {
           // WITHINGS
           try {
-            const [w, d] = await Promise.all([
-              withingsMetricsOverview(access),
-              withingsMetricsDaily(access),
-            ]);
+            const w = await withingsMetricsOverview(access);
+
+            // daily (with debug logs)
+            console.log("[Dash] calling withingsMetricsDaily");
+            const d = await withingsMetricsDaily(access).catch((e) => {
+              console.error("[Dash] daily failed before request:", e);
+              return null;
+            });
+            console.log("[Dash] daily result:", d);
 
             const latestW = await withingsWeightLatest(access);
             if (!mounted) return;

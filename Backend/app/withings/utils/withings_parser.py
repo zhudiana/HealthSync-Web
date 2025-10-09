@@ -11,12 +11,12 @@ WITHINGS_MEASURE_TYPES = {
     9:  "diastolic_bp",         # mmHg
     10: "systolic_bp",          # mmHg
     11: "heart_rate",           # bpm
-    12: "temperature",          # °C (legacy body temp)
+    12: "temperature",          # °C 
     54: "spo2",                 # %
     71: "body_temperature",     # °C
     73: "skin_temperature",     # °C
     76: "muscle_mass",          # kg
-    77: "hydration",            # kg (Withings reports mass of water)
+    77: "hydration",            # kg 
     88: "bone_mass",            # kg
     91: "pulse_wave_velocity",  # m/s
 }

@@ -1,3 +1,4 @@
+import { tokens } from "@/lib/storage";
 const API_BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
 type Provider = "fitbit" | "withings";
@@ -284,6 +285,17 @@ export async function updateUserByAuth(
   };
 }
 
+export async function apiFetch(input: string, init: RequestInit = {}) {
+  const jwt = tokens.getSession();
+  const headers = new Headers(init.headers || {});
+  if (jwt) headers.set("Authorization", `Bearer ${jwt}`);
+
+  // If caller gave a full URL, use it as-is; otherwise prefix API_BASE_URL
+  const isAbsolute = /^https?:\/\//i.test(input);
+  const url = isAbsolute ? input : `${API_BASE_URL}${input}`;
+  return fetch(url, { ...init, headers });
+}
+
 export async function withingsMetricsOverview(accessToken: string) {
   const url = new URL(`${API_BASE_URL}/withings/metrics/overview`);
   url.searchParams.set("access_token", accessToken);
@@ -305,13 +317,17 @@ export async function withingsWeightLatest(accessToken: string) {
 }
 
 export async function withingsMetricsDaily(accessToken: string, date?: string) {
-  const url = new URL(`${API_BASE_URL}/withings/metrics/daily`);
-  url.searchParams.set("access_token", accessToken);
-  if (date) url.searchParams.set("date", date);
-  const res = await fetch(url.toString());
+  const u = new URL(`${API_BASE_URL}/withings/metrics/daily`);
+  u.searchParams.set("access_token", accessToken);
+  if (date) u.searchParams.set("date", date);
+
+  const jwt = tokens.getSession();
+  const res = await apiFetch(u.toString(), {
+    headers: jwt ? { Authorization: `Bearer ${jwt}` } : undefined,
+  });
+
   const data = await res.json();
   if (!res.ok) throw new Error(data?.detail || "withings daily metrics failed");
-  // { date, steps, calories, sleepHours }
   return data as {
     date: string;
     steps: number | null;

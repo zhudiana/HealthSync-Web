@@ -1,20 +1,19 @@
-from fastapi import Body
-from fastapi import APIRouter, HTTPException, status
+from app.config import WITHINGS_CLIENT_ID, WITHINGS_REDIRECT_URI, WITHINGS_CLIENT_SECRET, APP_SECRET_KEY
+from fastapi import Body, APIRouter, HTTPException, status, Depends
+from app.db.crud.user import get_or_create_user_from_withings   
+from app.db.crud.withings import upsert_withings_account
+from datetime import datetime, timedelta, timezone
+from app.db.schemas import withings as db_schemas
+from app.auth.session import create_session_token
+from typing import Dict, Any
+from app.dependencies import get_db
+from urllib.parse import urlencode
+from sqlalchemy.orm import Session
 import requests
 import secrets
-from urllib.parse import urlencode
-from typing import Dict, Any, Optional
-from app.config import WITHINGS_CLIENT_ID, WITHINGS_REDIRECT_URI, WITHINGS_CLIENT_SECRET
 import time
 import json
 import os
-from fastapi import Depends
-from sqlalchemy.orm import Session
-from app.dependencies import get_db
-from app.db.schemas import withings as db_schemas
-from app.db.crud.withings import upsert_withings_account
-from datetime import datetime, timedelta, timezone
-from app.db.crud.user import get_or_create_user_from_withings   
 
 
 router = APIRouter()
@@ -22,8 +21,7 @@ router = APIRouter()
 WITHINGS_AUTHORIZE_URL = "https://account.withings.com/oauth2_user/authorize2"
 WITHINGS_TOKEN_URL = "https://wbsapi.withings.net/v2/oauth2"
 
-
-
+# stores temporary OAuth state values
 SESSION_FILE = "withings_sessions.json"
 
 def load_sessions():
@@ -48,6 +46,8 @@ def save_sessions(sessions):
 
 withings_sessions = load_sessions()
 
+
+
 @router.get("/withings/login")
 def login_withings():
     """Generate authorization URL for Withings OAuth 2.0"""
@@ -58,7 +58,6 @@ def login_withings():
         state = secrets.token_urlsafe(32)
         
         # Store state with timestamp
-        global withings_sessions
         withings_sessions[state] = {
             "timestamp": int(time.time()),
             "created": time.strftime('%Y-%m-%d %H:%M:%S')
@@ -94,82 +93,6 @@ def login_withings():
             detail=f"Error generating authorization URL: {str(e)}"
         )
 
-@router.get("/withings/callback")
-def withings_callback(
-    code: Optional[str] = None, 
-    state: Optional[str] = None, 
-    error: Optional[str] = None,
-    error_description: Optional[str] = None
-):
-    """Handle callback and exchange authorization code for tokens"""
-    try:
-        # Load fresh sessions from file
-        global withings_sessions
-        withings_sessions = load_sessions()
-        
-        # Check for authorization error
-        if error:
-            error_msg = f"Authorization failed: {error}"
-            if error_description:
-                error_msg += f" - {error_description}"
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=error_msg
-            )
-        
-        # Check if we have the required code
-        if not code:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Missing authorization code"
-            )
-        
-        # Validate state parameter
-        state_valid = True
-        if state:
-            if state not in withings_sessions:
-                # print(f"⚠️  State '{state}' not found in sessions: {list(withings_sessions.keys())}")
-                # For development, continue but warn
-                state_valid = False
-            else:
-                # print(f"✅ State '{state}' is valid")
-                session_data = withings_sessions[state]
-                age = int(time.time()) - session_data.get("timestamp", 0)
-                # print(f"🕐 Session age: {age} seconds")
-        else:
-            # print("⚠️  No state parameter provided")
-            state_valid = False
-        
-        token_response = exchange_code_for_tokens(code)
-        
-        # Clean up session data
-        if state_valid and state and state in withings_sessions:
-            del withings_sessions[state]
-            save_sessions(withings_sessions)
-            # print(f"🧹 Cleaned up session for state: {state}")
-        
-        return {
-            "message": "Authorization successful",
-            "tokens": token_response,
-            "debug_info": {
-                "code_length": len(code),
-                "state_provided": state is not None,
-                "state_valid": state_valid,
-                "remaining_sessions": len(withings_sessions)
-            }
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        # print(f"❌ Callback error: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error processing callback: {str(e)}"
-        )
-
 
 def exchange_code_for_tokens(auth_code: str) -> Dict[str, Any]:
     """
@@ -186,7 +109,6 @@ def exchange_code_for_tokens(auth_code: str) -> Dict[str, Any]:
             "grant_type": "authorization_code",
             "code": auth_code
         }
-        
         
         # Make token request
         response = requests.post(
@@ -219,6 +141,8 @@ def exchange_code_for_tokens(auth_code: str) -> Dict[str, Any]:
             )
         
         tokens = response_data.get("body", {})
+        if "access_token" not in tokens or "refresh_token" not in tokens or "userid" not in tokens:
+            raise HTTPException(400, "Malformed token response from Withings")
         return tokens
         
     except requests.exceptions.RequestException as e:
@@ -226,146 +150,6 @@ def exchange_code_for_tokens(auth_code: str) -> Dict[str, Any]:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Failed to connect to Withings API: {str(e)}"
         )
-
-@router.post("/withings/refresh")
-def refresh_withings_token(refresh_token: str):
-    """
-    Refresh expired access token using refresh token
-    """
-    try:
-        # Prepare refresh request data
-        refresh_data = {
-            "action": "requesttoken",
-            "client_id": WITHINGS_CLIENT_ID,
-            "client_secret": WITHINGS_CLIENT_SECRET,
-            "grant_type": "refresh_token",
-            "refresh_token": refresh_token
-        }
-        
-        
-        response = requests.post(
-            WITHINGS_TOKEN_URL,
-            data=refresh_data,
-            headers={
-                "Content-Type": "application/x-www-form-urlencoded"
-            },
-            timeout=30
-        )
- 
-        
-        if response.status_code != 200:
-            try:
-                error_detail = response.json()
-            except:
-                error_detail = response.text
-            raise HTTPException(
-                status_code=response.status_code,
-                detail=f"Token refresh failed: {error_detail}"
-            )
-        
-        response_data = response.json()
-        
-        if response_data.get("status") != 0:
-            error_msg = response_data.get("error", "Unknown error")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Withings API error: {error_msg}"
-            )
-        
-        return response_data.get("body", {})
-        
-    except requests.exceptions.RequestException as e:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Failed to connect to Withings API: {str(e)}"
-        )
-
-# Debug and utility endpoints
-@router.get("/withings/debug-sessions")
-def debug_withings_sessions():
-    """Debug endpoint to check current sessions"""
-    return {
-        "sessions": list(withings_sessions.keys()),
-        "session_count": len(withings_sessions),
-        "sessions_data": {k: v for k, v in withings_sessions.items()}
-    }
-
-@router.delete("/withings/cleanup-sessions")
-def cleanup_withings_sessions():
-    """Clean up all OAuth sessions"""
-    global withings_sessions
-    cleared_count = len(withings_sessions)
-    withings_sessions.clear()
-    return {"message": f"Cleared {cleared_count} Withings OAuth sessions"}
-
-@router.delete("/withings/cleanup-expired-sessions")  
-def cleanup_expired_sessions(max_age_seconds: int = 3600):
-    """Clean up expired OAuth sessions older than max_age_seconds"""
-    current_time = int(time.time())
-    expired_sessions = []
-    
-    for state, session_data in list(withings_sessions.items()):
-        session_age = current_time - session_data.get("timestamp", 0)
-        if session_age > max_age_seconds:
-            expired_sessions.append(state)
-            del withings_sessions[state]
-    
-    return {
-        "message": f"Cleaned up {len(expired_sessions)} expired sessions",
-        "expired_sessions": expired_sessions,
-        "remaining_sessions": len(withings_sessions)
-    }
-
-
-@router.get("/withings/profile")
-def withings_profile(access_token: str):
-    """
-    Return a minimal Withings profile (id, firstName, lastName, fullName).
-    Never 400s for UX: if Withings errors, return a safe placeholder.
-    Requires scope: user.info
-    """
-    try:
-        headers = {"Authorization": f"Bearer {access_token}"}
-        data = {"action": "getuserslist"}
-
-        r = requests.post(
-            "https://wbsapi.withings.net/v2/user",
-            headers=headers,
-            data=data,
-            timeout=30,
-        )
-
-        # Default placeholder (don’t break the UI)
-        placeholder = {"id": None, "firstName": None, "lastName": None, "fullName": "Withings User"}
-
-        # HTTP failure → return placeholder
-        if r.status_code != 200:
-            return placeholder
-
-        j = r.json() or {}
-
-        # Withings-level failure → return placeholder
-        if j.get("status") != 0:
-            # You can log j here for debugging if you want
-            return placeholder
-
-        users = (j.get("body") or {}).get("users") or []
-        u = users[0] if users else {}
-
-        first = (u.get("firstname") or "").strip() or None
-        last  = (u.get("lastname") or "").strip() or None
-        full  = (f"{first or ''} {last or ''}".strip() or None)
-
-        return {
-            "id": u.get("id"),
-            "firstName": first,
-            "lastName": last,
-            "fullName": full or "Withings User",
-        }
-
-    except requests.exceptions.RequestException:
-        # Network error → still return placeholder
-        return {"id": None, "firstName": None, "lastName": None, "fullName": "Withings User"}
 
 
 @router.post("/withings/exchange")
@@ -379,12 +163,11 @@ def withings_exchange(
         raise HTTPException(status_code=400, detail="Missing code or state")
 
     # validate state
-    global withings_sessions
     withings_sessions = load_sessions()
     if state not in withings_sessions:
         raise HTTPException(status_code=400, detail="Invalid or expired state parameter")
 
-    tokens = exchange_code_for_tokens(code)  # { access_token, refresh_token, expires_in, scope, token_type, userid, ... }
+    tokens = exchange_code_for_tokens(code) 
 
     # cleanup state
     try:
@@ -415,6 +198,13 @@ def withings_exchange(
     # ---- Create/find your APP user from Withings userid ----
     user = get_or_create_user_from_withings(db, userid, full_name)
 
+    session_token = create_session_token(
+        user_id=user.id,
+        auth_user_id=user.auth_user_id,
+        secret_key=APP_SECRET_KEY,
+        expires_in_days=7
+    )
+
 
     # ---- Upsert Withings account row (no user_id linking yet) ----
     create_payload = db_schemas.WithingsAccountCreate(
@@ -422,7 +212,6 @@ def withings_exchange(
         full_name=full_name,
         email=None,
         timezone=None,
-        # access_token=access_token,
         refresh_token=refresh_token,
         scope=scope,
         token_type=token_type,
@@ -443,4 +232,205 @@ def withings_exchange(
         "expires_at": acc.expires_at.isoformat() if acc.expires_at else None,
         "scope": acc.scope,
         "tokens": tokens,
+        "session": {
+            "token": session_token,
+            "aud": "HealthSync",
+            "ttl_days": 7
+        }
     }
+
+
+@router.post("/withings/refresh")
+def refresh_withings_token(refresh_token: str):
+    """
+    Refresh expired access token using refresh token
+    """
+    try:
+        # Prepare refresh request data
+        refresh_data = {
+            "action": "requesttoken",
+            "client_id": WITHINGS_CLIENT_ID,
+            "client_secret": WITHINGS_CLIENT_SECRET,
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token
+        }
+        
+        response = requests.post(
+            WITHINGS_TOKEN_URL,
+            data=refresh_data,
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded"
+            },
+            timeout=30
+        )
+        
+        if response.status_code != 200:
+            try:
+                error_detail = response.json()
+            except ValueError:
+                error_detail = response.text
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=f"Token refresh failed: {error_detail}"
+            )
+        
+        response_data = response.json()
+        
+        if response_data.get("status") != 0:
+            error_msg = response_data.get("error", "Unknown error")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Withings API error: {error_msg}"
+            )
+        
+        return response_data.get("body", {})
+        
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Failed to connect to Withings API: {str(e)}"
+        )
+
+@router.get("/withings/profile")
+def withings_profile(access_token: str):
+    """
+    Return a minimal Withings profile (id, firstName, lastName, fullName).
+    Never 400s for UX: if Withings errors, return a safe placeholder.
+    Requires scope: user.info
+    """
+    try:
+        headers = {"Authorization": f"Bearer {access_token}"}
+        data = {"action": "getuserslist"}
+
+        resp = requests.post(
+            "https://wbsapi.withings.net/v2/user",
+            headers=headers,
+            data=data,
+            timeout=30,
+        )
+
+        placeholder = {
+            "id": None,
+            "firstName": None,
+            "lastName": None,
+            "fullName": "Withings User",
+        }
+
+        if resp.status_code != 200:
+            return placeholder
+
+        try:
+            resp_json = resp.json() or {}
+        except ValueError:
+            return placeholder
+
+        if resp_json.get("status") != 0:
+            return placeholder
+
+        users = (resp_json.get("body") or {}).get("users") or []
+        user_obj = users[0] if users else {}
+
+        first = (user_obj.get("firstname") or "").strip() or None
+        last = (user_obj.get("lastname") or "").strip() or None
+        full = (f"{first or ''} {last or ''}".strip() or None)
+
+        return {
+            "id": user_obj.get("id"),
+            "firstName": first,
+            "lastName": last,
+            "fullName": full or "Withings User",
+        }
+
+    except requests.exceptions.RequestException:
+        return {"id": None, "firstName": None, "lastName": None, "fullName": "Withings User"}
+
+
+
+# comment the following at production
+# @router.get("/withings/debug-sessions")
+# def debug_withings_sessions():
+#     """Debug endpoint to check current sessions (DEV only)."""
+#     if os.getenv("ENV", "dev") != "dev":
+#         raise HTTPException(status_code=404, detail="Not found")
+
+#     sessions = load_sessions()
+
+#     masked = {k[:8] + "…" : v for k, v in sessions.items()}
+
+#     return {
+#         "session_count": len(sessions),
+#         "sessions": list(masked.keys()),
+#         "sessions_data": masked,
+#     }
+
+
+# @router.delete("/withings/cleanup-sessions")
+# def cleanup_withings_sessions():
+#     """Clean up all OAuth sessions (DEV only)."""
+#     if os.getenv("ENV", "dev") != "dev":
+#         raise HTTPException(status_code=404, detail="Not found")
+
+#     sessions = load_sessions()
+#     cleared_count = len(sessions)
+
+#     sessions.clear()
+#     save_sessions(sessions)  # overwrite file with {}
+
+#     global withings_sessions
+#     withings_sessions = {}
+
+#     return {"message": f"Cleared {cleared_count} Withings OAuth sessions"}
+
+
+# @router.delete("/withings/cleanup-expired-sessions")
+# def cleanup_expired_sessions(max_age_seconds: int = 3600):
+#     """
+#     Clean up expired OAuth sessions older than max_age_seconds (defaults to 1 hour).
+#     Deletes from both in-memory and the persisted JSON file.
+#     """
+#     # Optional: hide in prod
+#     if os.getenv("ENV", "dev") != "dev":
+#         raise HTTPException(status_code=404, detail="Not found")
+
+#     # Sanitize input
+#     if max_age_seconds < 0:
+#         max_age_seconds = 0
+
+#     # Load the freshest snapshot from disk
+#     sessions = load_sessions()
+#     current_time = int(time.time())
+#     expired = []
+
+#     # Build a new dict keeping only non-expired entries with valid timestamps
+#     kept: dict[str, dict] = {}
+#     for state, session_data in sessions.items():
+#         ts = 0
+#         if isinstance(session_data, dict):
+#             ts = int(session_data.get("timestamp", 0) or 0)
+#         age = current_time - ts
+#         if ts <= 0 or age > max_age_seconds:
+#             expired.append(state)
+#         else:
+#             kept[state] = session_data
+
+#     # Persist trimmed set to disk
+#     save_sessions(kept)
+
+#     # Keep the in-memory global in sync
+#     global withings_sessions
+#     withings_sessions = kept
+
+#     # Mask states in the response (avoid leaking full tokens)
+#     masked_expired = [s[:8] + "…" for s in expired]
+#     masked_remaining = [s[:8] + "…" for s in kept.keys()]
+
+#     return {
+#         "message": f"Cleaned up {len(expired)} expired sessions",
+#         "expired_count": len(expired),
+#         "remaining_count": len(kept),
+#         "expired_sessions": masked_expired,
+#         "remaining_sessions": masked_remaining,
+#     }
+
+
+

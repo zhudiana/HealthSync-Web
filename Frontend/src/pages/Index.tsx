@@ -10,9 +10,6 @@ export default function Index() {
   const auth = useAuth();
   const navigate = useNavigate();
 
-  // if (auth.isAuthenticated) {
-  //   navigate("/dashboard");
-  // }
   useEffect(() => {
     if (auth.isAuthenticated) {
       navigate("/dashboard");
