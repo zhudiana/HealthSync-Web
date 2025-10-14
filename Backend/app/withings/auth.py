@@ -149,12 +149,6 @@ def withings_exchange(
 
     tokens = exchange_code_for_tokens(code) 
 
-    # # cleanup state
-    # try:
-    #     del withings_sessions[state]
-    #     save_sessions(withings_sessions)
-    # except Exception:
-    #     pass
 
     # ---- Build payload ----
     access_token = tokens.get("access_token")

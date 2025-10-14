@@ -60,10 +60,11 @@ export default function AuthCallback() {
         if (userId) tokens.setUserId(provider, String(userId));
 
         setMsg("Connected! Redirecting to your dashboard…");
-        setTimeout(() => {
-          // hard replace so context re-reads storage immediately
-          window.location.replace("/dashboard");
-        }, 150);
+        navigate("/dashboard", { replace: true });
+        // setTimeout(() => {
+        //   // hard replace so context re-reads storage immediately
+        //   window.location.replace("/dashboard");
+        // }, 150);
       } catch (err: any) {
         console.error("[AuthCallback] error:", err);
         setMsg(`OAuth failed: ${err?.message || "Unknown error"}`);
