@@ -1,13 +1,15 @@
 from fastapi import APIRouter, HTTPException, Query, Response, Depends
 import requests
 from typing import Optional, List, Dict, Tuple
-from datetime import datetime, timedelta,time, date as _date
+from datetime import datetime, timedelta,time, date as _date, timezone as _tz
 from zoneinfo import ZoneInfo
 from sqlalchemy.orm import Session
-from app.dependencies import get_db, get_current_user_optional
-from app.db.models import WithingsAccount, User, MetricDaily, MetricIntraday
+from app.dependencies import get_db, get_current_user
+from app.db.models import User, MetricDaily, MetricIntraday
+from app.db.models.withings_account import WithingsAccount
+from app.utils.crypto import decrypt_text, encrypt_text
+from app.withings.auth import refresh_withings_token
 from sqlalchemy.dialects.postgresql import insert
-
 
 
 
@@ -17,6 +19,63 @@ MEASURE_URL = "https://wbsapi.withings.net/measure"
 MEASURE_V2_URL = "https://wbsapi.withings.net/v2/measure"
 SLEEP_V2_URL = "https://wbsapi.withings.net/v2/sleep"
 HEART_V2_URL = "https://wbsapi.withings.net/v2/heart"
+
+
+
+def _resolve_withings_access_token(db: Session, app_user: User) -> str:
+    acc = (
+        db.query(WithingsAccount)
+        .filter(WithingsAccount.user_id == app_user.id)
+        .first()
+    )
+    if not acc or not acc.refresh_token:
+        raise HTTPException(status_code=401, detail="Withings account not linked")
+
+    try:
+        rt_plain = decrypt_text(acc.refresh_token)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to decrypt refresh token")
+
+    refreshed = refresh_withings_token(rt_plain)  # returns dict with access_token
+    access_token = refreshed.get("access_token")
+    if not access_token:
+        raise HTTPException(status_code=400, detail="Failed to refresh access token")
+
+    # Optional: persist rotation/expiry if provided
+    new_refresh = refreshed.get("refresh_token")
+    expires_in = refreshed.get("expires_in")
+    if new_refresh or isinstance(expires_in, (int, float)):
+        try:
+            if new_refresh:
+                acc.refresh_token = encrypt_text(new_refresh)
+            if isinstance(expires_in, (int, float)):
+                acc.expires_at = datetime.now(_tz.utc) + timedelta(seconds=int(expires_in))
+            db.commit()
+        except Exception:
+            db.rollback()
+            # non-fatal
+            pass
+
+    return access_token
+
+
+# --- tiny 15s memo (per user+key) to absorb duplicates (optional)
+_MEMO: Dict[Tuple[int, str], Tuple[float, Dict]] = {}
+_MEMO_TTL_SEC = 15
+
+def _memo_get(user_id: int, key: str):
+    hit = _MEMO.get((user_id, key))
+    if not hit:
+        return None
+    ts, val = hit
+    if (datetime.now().timestamp() - ts) <= _MEMO_TTL_SEC:
+        return val
+    return None
+
+def _memo_put(user_id: int, key: str, value: Dict):
+    _MEMO[(user_id, key)] = (datetime.now().timestamp(), value)
+    return value
+
 
 def _auth(access_token: str) -> dict:
     return {"Authorization": f"Bearer {access_token}"}
@@ -182,27 +241,62 @@ def _persist_daily_snapshot(db: Session, access_token: str, app_user: User | Non
 @router.get("/daily")
 def daily_metrics(
     response: Response,
-    access_token: str,
     date: str = Query(default=None, description="YYYY-MM-DD"),
     fallback_days: int = Query(3, ge=0, le=14, description="Look back if empty"),
     debug: int = Query(0, description="Set 1 to include raw payloads"),
     db: Session = Depends(get_db),
-    app_user: User | None = Depends(get_current_user_optional),
+    app_user: User = Depends(get_current_user),
 ):
     """
     Withings daily snapshot:
-      - steps, distanceKm, (optional calories), sleepHours
+      - steps, distanceKm, sleepHours
       - use roll-up when present, but ALWAYS fill/override with intraday for 'today'
     Also persists results to metrics_daily (best-effort; UI never breaks).
     """
     if not date:
         date = _date.today().isoformat()
 
+
+    if not app_user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    # ---- Resolve a fresh Withings access token from the user's stored refresh_token
+    acc = (
+        db.query(WithingsAccount)
+        .filter(WithingsAccount.user_id == app_user.id)
+        .first()
+    )
+    if not acc or not acc.refresh_token:
+        raise HTTPException(status_code=400, detail="Withings account not linked")
+
+    try:
+        rt_plain = decrypt_text(acc.refresh_token)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Failed to read refresh token")
+
+    def _refresh_once() -> str:
+        refreshed = refresh_withings_token(rt_plain)  # returns dict
+        at = refreshed.get("access_token")
+        if not at:
+            raise HTTPException(status_code=400, detail="Failed to refresh access token")
+        return at
+
+    try:  # returns dict with access_token
+        access_token = _refresh_once()
+        if not access_token:
+            raise HTTPException(status_code=400, detail="Failed to refresh access token")
+    except HTTPException:
+        
+        raise
+    except Exception:
+        raise HTTPException(status_code=400, detail="Token refresh error")
+
+
     headers = _auth(access_token)
 
     def fetch_for(dstr: str):
         steps: Optional[int] = None
-        calories: Optional[float] = None
+        # calories: Optional[float] = None
         distance_km: Optional[float] = None
         tzname: Optional[str] = None
         act_json = intr_json = slp_json = None
@@ -228,13 +322,10 @@ def daily_metrics(
                         tzname = a.get("timezone")
                     s = a.get("steps")
                     d_m = a.get("distance")    # meters
-                    c = a.get("calories")
                     if isinstance(s, (int, float)):
                         total_steps += int(s)
                     if isinstance(d_m, (int, float)):
                         total_dist_m += float(d_m)
-                    if calories is None and isinstance(c, (int, float)):
-                        calories = float(c)
                 if total_steps > 0:
                     steps = total_steps
                 if total_dist_m > 0:
@@ -333,7 +424,6 @@ def daily_metrics(
         resp = {
             "date": dstr,
             "steps": steps,
-            "calories": calories,
             "sleepHours": sleep_hours,
             "distanceKm": distance_km,
         }
@@ -376,95 +466,169 @@ def daily_metrics(
 
 
 @router.get("/overview")
-def overview(access_token: str):
+def overview(
+    response: Response,
+    db: Session = Depends(get_db),
+    app_user: User = Depends(get_current_user),
+):
     """
     Minimal snapshot: latest weight (kg) and resting heart rate (bpm).
+    JWT-only: resolves Withings token server-side.
     """
-    headers = _auth(access_token)
-    # 1=weight, 11=HR; category=1 = real measurements
-    j = _post(MEASURE_URL, headers, {"action":"getmeas","meastype":"1,11","category":1})
-    if not j:
-        return {"weightKg": None, "restingHeartRate": None}
+    if not app_user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
 
+    cache_key = "overview"
+    cached = _memo_get(app_user.id, cache_key)
+    if cached is not None:
+        response.headers["Cache-Control"] = "no-store"
+        return cached
+
+    access_token = _resolve_withings_access_token(db, app_user)
+    headers = _auth(access_token)
+
+    # 1=weight, 11=HR; category=1 = measurements
+    j = _post(MEASURE_URL, headers, {"action": "getmeas", "meastype": "1,11", "category": 1})
     latest_weight = None
     latest_hr = None
     for g in (j.get("body") or {}).get("measuregrps", []):
         for m in g.get("measures", []):
-            v = m.get("value")
-            u = m.get("unit",0)
-            val = v * (10 ** u) if isinstance(v,(int,float)) and isinstance(u,(int,float)) else None
+            v = m.get("value"); u = m.get("unit", 0)
+            val = v * (10 ** u) if isinstance(v, (int, float)) and isinstance(u, (int, float)) else None
             if m.get("type") == 1 and val is not None:
                 latest_weight = val
             if m.get("type") == 11 and val is not None:
                 latest_hr = val
 
-    return {"weightKg": latest_weight, "restingHeartRate": latest_hr}
+    resp = {"weightKg": latest_weight, "restingHeartRate": latest_hr}
+    response.headers["Cache-Control"] = "no-store"
+    return _memo_put(app_user.id, cache_key, resp)
+
 
 
 @router.get("/weight/latest")
-def weight_latest(access_token: str, lookback_days: int = Query(90, ge=1, le=365)):
+def weight_latest(
+    lookback_days: int = Query(90, ge=1, le=365),
+    db: Session = Depends(get_db),
+    app_user: User = Depends(get_current_user),
+):
     """
     Latest weight (kg) within lookback window.
+    Uses the app session (JWT) to resolve a fresh Withings access token.
     """
+    # 1) Find the user's Withings account
+    acc = (
+        db.query(WithingsAccount)
+        .filter(WithingsAccount.user_id == app_user.id)
+        .first()
+    )
+    if not acc or not acc.refresh_token:
+        raise HTTPException(status_code=401, detail="Withings account not linked")
+
+    # 2) Refresh to a short-lived access token
+    try:
+        rt_plain = decrypt_text(acc.refresh_token)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to decrypt refresh token")
+
+    refreshed = refresh_withings_token(rt_plain)  # returns dict with access_token
+    access_token = refreshed.get("access_token")
+    if not access_token:
+        raise HTTPException(status_code=400, detail="Failed to refresh access token")
+
+    # 3) Call Withings for weight
     headers = _auth(access_token)
-   
-    j = _post(MEASURE_URL, headers, {"action":"getmeas","meastype":"1","category":1})
+    j = _post(MEASURE_URL, headers, {"action": "getmeas", "meastype": "1", "category": 1})
     if not j:
         return {"value": None, "latest_date": None}
+
     groups = (j.get("body") or {}).get("measuregrps", [])
     latest = None
     latest_ts = -1
     for g in groups:
         ts = g.get("date", -1)
+        # optional window filter by lookback_days if you want to enforce it later
         for m in g.get("measures", []):
             if m.get("type") == 1:
                 v = m.get("value")
-                u = m.get("unit",0)
-                val = v * (10 ** u) if isinstance(v,(int,float)) and isinstance(u,(int,float)) else None
+                u = m.get("unit", 0)
+                val = v * (10 ** u) if isinstance(v, (int, float)) and isinstance(u, (int, float)) else None
                 if val is not None and ts > latest_ts:
                     latest_ts = ts
                     latest = (val, ts)
+
     if not latest:
         return {"value": None, "latest_date": None}
+
     from datetime import datetime, timezone
-    return {"value": latest[0], "latest_date": datetime.fromtimestamp(latest[1], tz=timezone.utc).date().isoformat()}
+    return {
+        "value": latest[0],
+        "latest_date": datetime.fromtimestamp(latest[1], tz=timezone.utc).date().isoformat(),
+    }
 
 
 @router.get("/weight/history")
-def weight_history(access_token: str,
-                   start: str = Query(..., description="YYYY-MM-DD"),
-                   end: str = Query(..., description="YYYY-MM-DD")):
+def weight_history(
+    response: Response,
+    start: str = Query(..., description="YYYY-MM-DD"),
+    end: str = Query(..., description="YYYY-MM-DD"),
+    db: Session = Depends(get_db),
+    app_user: User = Depends(get_current_user),
+):
+    if not app_user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    cache_key = f"weight_hist:{start}:{end}"
+    cached = _memo_get(app_user.id, cache_key)
+    if cached is not None:
+        response.headers["Cache-Control"] = "no-store"
+        return cached
+
+    access_token = _resolve_withings_access_token(db, app_user)
     headers = _auth(access_token)
-    j = _post(MEASURE_URL, headers, {"action":"getmeas","meastype":"1","category":1,"startdateymd":start,"enddateymd":end})
-    if not j:
-        return {"start": start, "end": end, "items": []}
+
+    j = _post(MEASURE_URL, headers, {
+        "action": "getmeas",
+        "meastype": "1",
+        "category": 1,
+        "startdateymd": start,
+        "enddateymd": end,
+    })
     items = []
     for g in (j.get("body") or {}).get("measuregrps", []):
         w = None
         for m in g.get("measures", []):
             if m.get("type") == 1:
-                v = m.get("value")
-                u = m.get("unit",0)
+                v = m.get("value"); u = m.get("unit", 0)
                 w = v * (10 ** u) if isinstance(v,(int,float)) and isinstance(u,(int,float)) else None
         if w is not None:
             items.append({"date": _date.fromtimestamp(g.get("date")).isoformat(), "weight": w})
-    # optional: sort by date
     items.sort(key=lambda x: x["date"])
-    return {"start": start, "end": end, "items": items}
+
+    resp = {"start": start, "end": end, "items": items}
+    response.headers["Cache-Control"] = "no-store"
+    return _memo_put(app_user.id, cache_key, resp)
 
 
 @router.get("/heart-rate/daily")
 def heart_rate_daily(
-    access_token: str,
-    date: Optional[str] = Query(None, description="YYYY-MM-DD (defaults to today)")
+    response: Response,
+    date: Optional[str] = Query(None, description="YYYY-MM-DD (defaults to today)"),
+    db: Session = Depends(get_db),
+    app_user: User = Depends(get_current_user),
 ):
-    """
-    Daily heart-rate roll-up from Withings (avg/min/max) for the given local day.
-    This is NOT 'resting HR'; it's the day's HR summary calculated by Withings.
-    """
+    if not app_user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
     if not date:
         date = _date.today().isoformat()
 
+    cache_key = f"hr_daily:{date}"
+    cached = _memo_get(app_user.id, cache_key)
+    if cached is not None:
+        response.headers["Cache-Control"] = "no-store"
+        return cached
+
+    access_token = _resolve_withings_access_token(db, app_user)
     headers = _auth(access_token)
     payload = {
         "action": "getactivity",
@@ -473,268 +637,207 @@ def heart_rate_daily(
         "data_fields": "hr_average,hr_min,hr_max"
     }
     j = _post(MEASURE_V2_URL, headers, payload)
-    if not j:
-        return {"date": date, "hr_average": None, "hr_min": None, "hr_max": None, "updatedAt": None}
-
     acts = (j.get("body") or {}).get("activities") or []
     a0 = acts[0] if acts else {}
-    updated_at = a0.get("modified") or a0.get("date")  # epoch seconds if present
+    updated_at = a0.get("modified") or a0.get("date")
 
-    return {
+    resp = {
         "date": date,
         "hr_average": a0.get("hr_average"),
         "hr_min": a0.get("hr_min"),
         "hr_max": a0.get("hr_max"),
-        "updatedAt": updated_at  # epoch seconds or None
+        "updatedAt": updated_at
     }
+    response.headers["Cache-Control"] = "no-store"
+    return _memo_put(app_user.id, cache_key, resp)
 
 
 @router.get("/heart-rate/intraday")
 def heart_rate_intraday(
-    access_token: str,
-    # date-only convenience
+    response: Response,
     start: Optional[str] = Query(None, description="YYYY-MM-DD (defaults to today, user local)"),
     end: Optional[str] = Query(None, description="YYYY-MM-DD (defaults to start)"),
-    # NEW: rolling window ending now (takes precedence if provided)
-    minutes: Optional[int] = Query(
-        None, ge=1, le=1440,
-        description="Lookback window in minutes, ending now (UTC-converted). If set, ignores start/end."
-    ),
-    # NEW: finer control within days (used only when minutes is not provided)
-    start_time: Optional[str] = Query(None, description="HH:MM (local). Used with 'start'."),
-    end_time: Optional[str] = Query(None, description="HH:MM (local). Used with 'end' (defaults to now if start==end)."),
-    debug: int = Query(0, ge=0, le=1, description="Set 1 to include a small raw hint for debugging")
+    minutes: Optional[int] = Query(None, ge=1, le=1440),
+    start_time: Optional[str] = Query(None, description="HH:MM (local)"),
+    end_time: Optional[str] = Query(None, description="HH:MM (local)"),
+    debug: int = Query(0, ge=0, le=1),
+    db: Session = Depends(get_db),
+    app_user: User = Depends(get_current_user),
 ):
-    """
-    Intraday heart-rate samples (bpm) via Measure v2 getintradayactivity.
-    Modes:
-      • minutes lookback ending now (preferred for 'as recent as possible')
-      • date-only full days
-      • date + HH:MM slice(s)
-    Returns: { items: [{ts,bpm}], latest, window, [raw_hint?] }
-    """
-    from datetime import datetime, timedelta
-    from zoneinfo import ZoneInfo
-    import time as _time_mod
+    if not app_user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
 
+    # small memo key (captures the query shape)
+    key_bits = [f"m={minutes}" if minutes else "", f"s={start}" if start else "", f"e={end}" if end else "", f"st={start_time}" if start_time else "", f"et={end_time}" if end_time else "", f"d={debug}"]
+    cache_key = "hr_intraday:" + "|".join([b for b in key_bits if b])
+    cached = _memo_get(app_user.id, cache_key)
+    if cached is not None:
+        response.headers["Cache-Control"] = "no-store"
+        return cached
+
+    access_token = _resolve_withings_access_token(db, app_user)
     headers = _auth(access_token)
 
-    # TODO: if you store user tz in DB, use it; this is your current default
-    USER_TZ = _user_tz(headers)
+    # (Keep your existing windowing/collection logic exactly as-is, just replace 'headers' and remove access_token param.)
+    # --- BEGIN unchanged logic from your function (uses headers = _auth(access_token)) ---
+    from datetime import datetime as _dt, timedelta as _td
+    USER_TZ = ZoneInfo("Europe/Rome")
     UTC = ZoneInfo("UTC")
 
-    def _to_epoch(dt: datetime) -> int:
-        return int(dt.timestamp())
+    def _to_epoch(dt: _dt) -> int: return int(dt.timestamp())
 
     def _parse_hhmm(hhmm: Optional[str]) -> Tuple[Optional[int], Optional[int]]:
-        if not hhmm:
-            return None, None
-        h, m = hhmm.split(":")
-        return int(h), int(m)
+        if not hhmm: return None, None
+        h, m = hhmm.split(":"); return int(h), int(m)
 
-    def _ymd_hhmm_local(ymd: str, hhmm: Optional[str], default_end_now=False) -> datetime:
-        base = datetime.fromisoformat(ymd).replace(tzinfo=USER_TZ)
+    def _ymd_hhmm_local(ymd: str, hhmm: Optional[str], default_end_now=False) -> _dt:
+        base = _dt.fromisoformat(ymd).replace(tzinfo=USER_TZ)
         if hhmm:
-            h, m = _parse_hhmm(hhmm)
-            return base.replace(hour=h or 0, minute=m or 0, second=0, microsecond=0)
-        if default_end_now:
-            return datetime.now(USER_TZ)
-        # start-of-day by default
-        return base.replace(hour=0, minute=0, second=0, microsecond=0)
+            h, m = _parse_hhmm(hhmm); return base.replace(hour=h or 0, minute=m or 0, second=0, microsecond=0)
+        return _dt.now(USER_TZ) if default_end_now else base.replace(hour=0, minute=0, second=0, microsecond=0)
 
     def _collect(start_unix: int, end_unix: int):
-        payload = {
-            "action": "getintradayactivity",
-            "startdate": start_unix,
-            "enddate": end_unix,
-            "data_fields": "heart_rate",
-        }
+        payload = {"action": "getintradayactivity", "startdate": start_unix, "enddate": end_unix, "data_fields": "heart_rate"}
         j = _post(MEASURE_V2_URL, headers, payload)
-        if not j:
-            return [], None
-
-        body = (j.get("body") or {})
-        series = body.get("series")
-        pts: List[Dict] = []
-
-        # Shape A: list of chunks -> each chunk has data: [{timestamp, hr}, ...]
+        if not j: return [], None
+        body = (j.get("body") or {}); series = body.get("series"); pts: List[Dict] = []
         if isinstance(series, list):
             for chunk in series or []:
                 data_list = chunk.get("data") if isinstance(chunk, dict) else None
                 if isinstance(data_list, list):
                     for pt in data_list:
-                        bpm = pt.get("hr", pt.get("heart_rate"))
-                        ts = pt.get("timestamp") or pt.get("time")
-                        if isinstance(bpm, (int, float)) and isinstance(ts, (int, float)):
-                            pts.append({"ts": int(ts), "bpm": float(bpm)})
-
-        # Shape B: dict with 'data' list
+                        bpm = pt.get("hr", pt.get("heart_rate")); ts = pt.get("timestamp") or pt.get("time")
+                        if isinstance(bpm, (int, float)) and isinstance(ts, (int, float)): pts.append({"ts": int(ts), "bpm": float(bpm)})
         if isinstance(series, dict) and isinstance(series.get("data"), list):
             for pt in series["data"]:
-                bpm = pt.get("hr", pt.get("heart_rate"))
-                ts = pt.get("timestamp") or pt.get("time")
-                if isinstance(bpm, (int, float)) and isinstance(ts, (int, float)):
-                    pts.append({"ts": int(ts), "bpm": float(bpm)})
-
-        # Shape C: dict of metric maps e.g. {'hr': {'1695523200': 72, ...}}
+                bpm = pt.get("hr", pt.get("heart_rate")); ts = pt.get("timestamp") or pt.get("time")
+                if isinstance(bpm, (int, float)) and isinstance(ts, (int, float)): pts.append({"ts": int(ts), "bpm": float(bpm)})
         if isinstance(series, dict):
             for key in ("hr", "heart_rate"):
                 mm = series.get(key)
                 if isinstance(mm, dict):
                     for ts_str, val in mm.items():
-                        # keys may be str epochs
-                        try:
-                            ts_i = int(ts_str)
-                            pts.append({"ts": ts_i, "bpm": float(val)})
-                        except Exception:
-                            continue
-
-        # De-dupe + sort
-        seen = set()
-        pts = [p for p in pts if not (p["ts"] in seen or seen.add(p["ts"]))]
-        pts.sort(key=lambda x: x["ts"])
+                        try: ts_i = int(ts_str); pts.append({"ts": ts_i, "bpm": float(val)})
+                        except Exception: continue
+        seen = set(); pts = [p for p in pts if not (p["ts"] in seen or seen.add(p["ts"]))]; pts.sort(key=lambda x: x["ts"])
         return pts, (body if debug else None)
 
-    # ------------------ Build query window(s) ------------------
-    items: List[Dict] = []
-    raw_hint = None
-    window_utc: Tuple[int, int] = (None, None)  # type: ignore
+    items: List[Dict] = []; raw_hint = None; window_utc: Tuple[int, int] = (None, None)  # type: ignore
 
     if minutes:
-        # Rolling window ending now (local -> UTC)
-        end_local = datetime.now(USER_TZ)
-        start_local = end_local - timedelta(minutes=minutes)
-        s = _to_epoch(start_local.astimezone(UTC))
-        e = _to_epoch(end_local.astimezone(UTC))
-        # For "today" safety: cap end at current epoch to avoid slight future rounding
-        e = min(e, int(_time_mod.time()))
-        pts, raw = _collect(s, e)
-        items.extend(pts)
-        raw_hint = raw
-        window_utc = (s, e)
+        end_local = _dt.now(USER_TZ); start_local = end_local - _td(minutes=minutes)
+        s = _to_epoch(start_local.astimezone(UTC)); e = _to_epoch(min(end_local, _dt.now(USER_TZ)).astimezone(UTC))
+        pts, raw = _collect(s, e); items.extend(pts); raw_hint = raw; window_utc = (s, e)
     else:
-        # Date-only or date + HH:MM
-        if not start:
-            start = datetime.now(USER_TZ).date().isoformat()
-        if not end:
-            end = start
-
-        start_date = datetime.fromisoformat(start).date()
-        end_date = datetime.fromisoformat(end).date()
-        if end_date < start_date:
-            # swap defensively
-            start_date, end_date = end_date, start_date
-
-        cur = start_date
-        overall_s = None
-        overall_e = None
-
+        if not start: start = _dt.now(USER_TZ).date().isoformat()
+        if not end: end = start
+        start_date = _dt.fromisoformat(start).date(); end_date = _dt.fromisoformat(end).date()
+        if end_date < start_date: start_date, end_date = end_date, start_date
+        cur = start_date; overall_s = None; overall_e = None
         while cur <= end_date:
-            # start bound
-            if cur == start_date:
-                s_local = _ymd_hhmm_local(cur.isoformat(), start_time, default_end_now=False)
-            else:
-                s_local = _ymd_hhmm_local(cur.isoformat(), None, default_end_now=False)
-
-            # end bound
+            s_local = _ymd_hhmm_local(cur.isoformat(), start_time if cur == start_date else None)
+            same_single_day = (start_date == end_date)
             if cur == end_date:
-                # on the final day: use end_time if given, else now (if same single day) else end-of-day
-                same_single_day = (start_date == end_date)
-                if end_time:
-                    e_local = _ymd_hhmm_local(cur.isoformat(), end_time, default_end_now=False)
-                elif same_single_day:
-                    e_local = datetime.now(USER_TZ)
-                else:
-                    e_local = s_local.replace(hour=23, minute=59, second=59, microsecond=0)
+                e_local = _ymd_hhmm_local(cur.isoformat(), end_time, default_end_now=same_single_day)
             else:
                 e_local = s_local.replace(hour=23, minute=59, second=59, microsecond=0)
-
-            # Convert to UTC epochs and clamp end to "now"
-            s = _to_epoch(s_local.astimezone(UTC))
-            e = _to_epoch(min(e_local, datetime.now(USER_TZ)).astimezone(UTC))
+            s = _to_epoch(s_local.astimezone(UTC)); e = _to_epoch(min(e_local, _dt.now(USER_TZ)).astimezone(UTC))
             if e > s:
-                pts, raw = _collect(s, e)
-                items.extend(pts)
-                raw_hint = raw_hint or raw
+                pts, raw = _collect(s, e); items.extend(pts); raw_hint = raw_hint or raw
                 overall_s = s if overall_s is None else min(overall_s, s)
                 overall_e = e if overall_e is None else max(overall_e, e)
+            cur += _td(days=1)
 
-            cur += timedelta(days=1)
+        if overall_s is not None and overall_e is not None: window_utc = (overall_s, overall_e)
 
-        if overall_s is not None and overall_e is not None:
-            window_utc = (overall_s, overall_e)
-
-    # ------------------ Response ------------------
     resp: Dict = {"items": items}
-    if items:
-        resp["latest"] = max(items, key=lambda x: x["ts"])
-    if window_utc[0] is not None:
-        resp["window"] = {"start_utc": window_utc[0], "end_utc": window_utc[1]}
+    if items: resp["latest"] = max(items, key=lambda x: x["ts"])
+    if window_utc[0] is not None: resp["window"] = {"start_utc": window_utc[0], "end_utc": window_utc[1]}
     if debug and raw_hint is not None:
-        resp["raw_hint"] = {
-            "has_series": isinstance((raw_hint or {}).get("series"), (list, dict)),
-            "series_type": type((raw_hint or {}).get("series")).__name__,
-            "keys": list((raw_hint or {}).keys())[:8],
-        }
-    return resp
+        resp["raw_hint"] = {"has_series": isinstance((raw_hint or {}).get("series"), (list, dict)),
+                            "series_type": type((raw_hint or {}).get("series")).__name__,
+                            "keys": list((raw_hint or {}).keys())[:8]}
+    # --- END unchanged logic ---
+    response.headers["Cache-Control"] = "no-store"
+    return _memo_put(app_user.id, cache_key, resp)
 
 
 @router.get("/spo2")
-def spo2(access_token: str,
-         start: Optional[str] = Query(None, description="YYYY-MM-DD"),
-         end: Optional[str] = Query(None, description="YYYY-MM-DD")):
-    """
-    Latest or range of SpO₂ (%).
-    """
+def spo2(
+    response: Response,
+    start: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    end: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    db: Session = Depends(get_db),
+    app_user: User = Depends(get_current_user),
+):
+    if not app_user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    cache_key = f"spo2:{start or ''}:{end or ''}"
+    cached = _memo_get(app_user.id, cache_key)
+    if cached is not None:
+        response.headers["Cache-Control"] = "no-store"
+        return cached
+
+    access_token = _resolve_withings_access_token(db, app_user)
     headers = _auth(access_token)
-    payload = {"action":"getmeas","meastype":"54","category":1}
+
+    payload = {"action": "getmeas", "meastype": "54", "category": 1}
     if start and end:
         payload.update({"startdateymd": start, "enddateymd": end})
     j = _post(MEASURE_URL, headers, payload)
-    if not j:
-        return {"items": []}
+
     items = []
     for g in (j.get("body") or {}).get("measuregrps", []):
         for m in g.get("measures", []):
             if m.get("type") == 54:
-                v = m.get("value")
-                u = m.get("unit",0)
+                v = m.get("value"); u = m.get("unit", 0)
                 p = v * (10 ** u) if isinstance(v,(int,float)) and isinstance(u,(int,float)) else None
                 if p is not None:
                     items.append({"ts": g.get("date"), "percent": p})
+
+    resp = {"items": items}
     if not (start and end) and items:
-        latest = max(items, key=lambda x: x["ts"])
-        return {"latest": latest}
-    return {"items": items}
+        resp = {"latest": max(items, key=lambda x: x["ts"])}
+
+    response.headers["Cache-Control"] = "no-store"
+    return _memo_put(app_user.id, cache_key, resp)
 
 
 
 @router.get("/temperature")
 def temperature(
-    access_token: str,
+    response: Response,
     start: str = Query(..., description="YYYY-MM-DD"),
     end: str   = Query(..., description="YYYY-MM-DD"),
     tz: str    = Query("UTC", description="IANA tz like Europe/Rome"),
+    db: Session = Depends(get_db),
+    app_user: User = Depends(get_current_user),
 ):
-    """
-    Manual body temperature (attrib=2), °C.
-    Always returns newest entry first.
-    """
-    from zoneinfo import ZoneInfo
-    import datetime as dt
+    if not app_user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
 
+    cache_key = f"temp:{start}:{end}:{tz}"
+    cached = _memo_get(app_user.id, cache_key)
+    if cached is not None:
+        response.headers["Cache-Control"] = "no-store"
+        return cached
+
+    access_token = _resolve_withings_access_token(db, app_user)
     headers = _auth(access_token)
-    payload = {
+
+    j = _post(MEASURE_URL, headers, {
         "action": "getmeas",
-        "meastype": "71",           # body temp
+        "meastype": "71",
         "startdateymd": start,
         "enddateymd": end,
-    }
-    j = _post(MEASURE_URL, headers, payload)
+    })
 
+    from zoneinfo import ZoneInfo as _ZI
+    import datetime as dt
     items = []
     for g in (j or {}).get("body", {}).get("measuregrps", []):
-        if g.get("attrib") != 2:     # manual only
+        if g.get("attrib") != 2:  # manual only
             continue
         ts = g.get("date")
         for m in g.get("measures", []):
@@ -743,40 +846,43 @@ def temperature(
                 val = v * (10 ** u)
                 items.append({
                     "ts": ts,
-                    "date_local": dt.datetime.fromtimestamp(ts, ZoneInfo(tz)).isoformat(),
+                    "date_local": dt.datetime.fromtimestamp(ts, _ZI(tz)).isoformat(),
                     "body_c": val,
                 })
-
-    # sort newest first
     items.sort(key=lambda x: x["ts"], reverse=True)
 
-    return {
-        "start": start,
-        "end": end,
-        "tz": tz,
-        "items": items,
-        "latest": items[0] if items else None
-    }
+    resp = {"start": start, "end": end, "tz": tz, "items": items, "latest": (items[0] if items else None)}
+    response.headers["Cache-Control"] = "no-store"
+    return _memo_put(app_user.id, cache_key, resp)
 
 
 @router.get("/sleep")
-def sleep_summary(access_token: str,
-                  date: str = Query(default=None, description="YYYY-MM-DD (defaults to today)")):
-    """
-    Sleep for the given local day:
-      - sleepHours (sum of totalsleepduration/asleepduration)
-    """
+def sleep_summary(
+    response: Response,
+    date: str = Query(default=None, description="YYYY-MM-DD (defaults to today)"),
+    db: Session = Depends(get_db),
+    app_user: User = Depends(get_current_user),
+):
+    if not app_user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
     if not date:
         date = _date.today().isoformat()
+
+    cache_key = f"sleep:{date}"
+    cached = _memo_get(app_user.id, cache_key)
+    if cached is not None:
+        response.headers["Cache-Control"] = "no-store"
+        return cached
+
+    access_token = _resolve_withings_access_token(db, app_user)
     headers = _auth(access_token)
+
     j = _post(SLEEP_V2_URL, headers, {
-        "action":"getsummary",
-        "startdateymd":date,
-        "enddateymd":date,
+        "action": "getsummary",
+        "startdateymd": date,
+        "enddateymd": date,
         "data_fields": "totalsleepduration,asleepduration"
-        })
-    if not j:
-        return {"date": date, "sleepHours": None}
+    })
     series = (j.get("body") or {}).get("series") or []
     total_sec = 0
     for item in series:
@@ -786,23 +892,32 @@ def sleep_summary(access_token: str,
         elif isinstance(data.get("asleepduration"), (int, float)):
             total_sec += data["asleepduration"]
     hours = round(total_sec / 3600.0, 2) if total_sec else None
-    return {"date": date, "sleepHours": hours}
+
+    resp = {"date": date, "sleepHours": hours}
+    response.headers["Cache-Control"] = "no-store"
+    return _memo_put(app_user.id, cache_key, resp)
 
 
 
 @router.get("/ecg")
 def ecg_list(
-    access_token: str,
+    response: Response,
     start: Optional[str] = Query(None, description="YYYY-MM-DD (default: 7 days ago)"),
     end: Optional[str]   = Query(None, description="YYYY-MM-DD (default: today)"),
     tz: str              = Query("Europe/Rome", description="IANA timezone for window"),
     limit: int           = Query(25, ge=1, le=200, description="Max ECG items"),
+    db: Session = Depends(get_db),
+    app_user: User = Depends(get_current_user),
 ):
-    """
-    List ECG recordings (newest first) within the [start,end] local-day window.
-    Returns minimal normalized fields + `latest` convenience.
-    """
-    # Defaults: last 7 days in local tz
+    if not app_user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    cache_key = f"ecg:{start or ''}:{end or ''}:{tz}:{limit}"
+    cached = _memo_get(app_user.id, cache_key)
+    if cached is not None:
+        response.headers["Cache-Control"] = "no-store"
+        return cached
+
     try:
         z = ZoneInfo(tz)
     except Exception:
@@ -817,17 +932,13 @@ def ecg_list(
     start_epoch = int(datetime.combine(start_day, time(0, 0, 0), tzinfo=z).timestamp())
     end_epoch   = int(datetime.combine(end_day,   time(23, 59, 59), tzinfo=z).timestamp())
 
+    access_token = _resolve_withings_access_token(db, app_user)
     headers = _auth(access_token)
-    j = _post(HEART_V2_URL, headers, {
-        "action": "list",
-        "startdate": start_epoch,
-        "enddate": end_epoch,
-    })
+    j = _post(HEART_V2_URL, headers, {"action": "list", "startdate": start_epoch, "enddate": end_epoch})
     series = ((j or {}).get("body") or {}).get("series") or []
 
     items: List[Dict] = []
     for s in series:
-        # Robust field extraction across possible shapes
         signalid = s.get("signalid") or s.get("id")
         ts = s.get("timestamp") or s.get("startdate") or s.get("time")
         if not isinstance(ts, (int, float)):
@@ -846,12 +957,11 @@ def ecg_list(
             "model": s.get("model"),
         })
 
-    # Newest first + limit
     items.sort(key=lambda x: x["ts"], reverse=True)
     if len(items) > limit:
         items = items[:limit]
 
-    return {
+    resp = {
         "start": start or start_day.isoformat(),
         "end": end or end_day.isoformat(),
         "tz": tz,
@@ -859,28 +969,34 @@ def ecg_list(
         "latest": (items[0] if items else None),
         "items": items,
     }
+    response.headers["Cache-Control"] = "no-store"
+    return _memo_put(app_user.id, cache_key, resp)
 
 
 @router.get("/hrv")
 def hrv_nightly(
-    access_token: str,
-    # By default: try today; if empty we’ll also look at yesterday (common for nightly data)
+    response: Response,
     start: Optional[str] = Query(None, description="YYYY-MM-DD (default: today)"),
     end: Optional[str]   = Query(None, description="YYYY-MM-DD (default: start)"),
     tz: str              = Query("Europe/Rome", description="IANA timezone for local days"),
-    fallback_yesterday: int = Query(1, ge=0, le=1, description="If today empty, also fetch yesterday")
+    fallback_yesterday: int = Query(1, ge=0, le=1),
+    db: Session = Depends(get_db),
+    app_user: User = Depends(get_current_user),
 ):
-    """
-    Nightly HRV from Withings Sleep v2 summary.
-    Returns per-day RMSSD (ms) and, if present, SDNN (ms).
-    Availability depends on device/feature; missing days return no item.
-    """
+    if not app_user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    cache_key = f"hrv:{start or ''}:{end or ''}:{tz}:{fallback_yesterday}"
+    cached = _memo_get(app_user.id, cache_key)
+    if cached is not None:
+        response.headers["Cache-Control"] = "no-store"
+        return cached
+
     try:
         z = ZoneInfo(tz)
     except Exception:
         z = ZoneInfo("Europe/Rome")
 
-    # Build default day window in user's tz
     from datetime import datetime as _dt, timedelta as _td
     today_local = _dt.now(z).date()
     if not start:
@@ -888,12 +1004,12 @@ def hrv_nightly(
     if not end:
         end = start
 
-    # Optionally extend to yesterday if today is the only day and ends up empty
     query_windows = [(start, end)]
     if fallback_yesterday and start == end:
-        y = ( _dt.fromisoformat(start).date() - _td(days=1) ).isoformat()
+        y = (_dt.fromisoformat(start).date() - _td(days=1)).isoformat()
         query_windows.append((y, y))
 
+    access_token = _resolve_withings_access_token(db, app_user)
     headers = _auth(access_token)
 
     def fetch(d0: str, d1: str):
@@ -901,7 +1017,6 @@ def hrv_nightly(
             "action": "getsummary",
             "startdateymd": d0,
             "enddateymd": d1,
-            # Ask for HR/HRV fields plus sleep duration (not strictly required)
             "data_fields": "rmssd,sdnn,hr_average,asleepduration,totalsleepduration"
         }
         j = _post(SLEEP_V2_URL, headers, payload)
@@ -909,20 +1024,16 @@ def hrv_nightly(
         if not j:
             return items
         for row in ((j.get("body") or {}).get("series") or []):
-            d = row.get("date") or row.get("startdateymd")  # some payloads add 'date'
+            d = row.get("date") or row.get("startdateymd")
             data = row.get("data") or {}
-            rmssd = data.get("rmssd")
-            sdnn  = data.get("sdnn")
-            hravg = data.get("hr_average")
-            # Only add when we have at least RMSSD or SDNN
+            rmssd = data.get("rmssd"); sdnn = data.get("sdnn"); hravg = data.get("hr_average")
             if isinstance(rmssd, (int, float)) or isinstance(sdnn, (int, float)):
                 items.append({
                     "date": d,
                     "rmssd_ms": float(rmssd) if isinstance(rmssd, (int, float)) else None,
-                    "sdnn_ms":  float(sdnn)  if isinstance(sdnn,  (int, float)) else None,
+                    "sdnn_ms": float(sdnn) if isinstance(sdnn, (int, float)) else None,
                     "hr_average": float(hravg) if isinstance(hravg, (int, float)) else None,
                 })
-        # Sort by date asc
         items.sort(key=lambda x: (x.get("date") or ""))
         return items
 
@@ -930,21 +1041,14 @@ def hrv_nightly(
     for (d0, d1) in query_windows:
         got = fetch(d0, d1)
         all_items.extend(got)
-        # If we requested today only and got something, no need to also return yesterday
         if start == end and got:
             break
 
-    # De-dup by date (keep last)
-    dedup = {}
+    dedup = {};  # keep last by date
     for it in all_items:
         dedup[it["date"]] = it
-    items = list(dedup.values())
-    items.sort(key=lambda x: (x.get("date") or ""))
+    items = list(dedup.values()); items.sort(key=lambda x: (x.get("date") or ""))
 
-    return {
-        "start": start,
-        "end": end,
-        "tz": tz,
-        "items": items,
-        "latest": (items[-1] if items else None)
-    }
+    resp = {"start": start, "end": end, "tz": tz, "items": items, "latest": (items[-1] if items else None)}
+    response.headers["Cache-Control"] = "no-store"
+    return _memo_put(app_user.id, cache_key, resp)

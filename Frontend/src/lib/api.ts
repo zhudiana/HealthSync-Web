@@ -296,76 +296,49 @@ export async function apiFetch(input: string, init: RequestInit = {}) {
   return fetch(url, { ...init, headers });
 }
 
-export async function withingsMetricsOverview(accessToken: string) {
-  const url = new URL(`${API_BASE_URL}/withings/metrics/overview`);
-  url.searchParams.set("access_token", accessToken);
-  const res = await fetch(url.toString());
+export async function withingsMetricsOverview() {
+  const res = await apiFetch(`/withings/metrics/overview`);
   const data = await res.json();
   if (!res.ok) throw new Error(data?.detail || "withings metrics failed");
-  // { weightKg: number|null, restingHeartRate: number|null }
   return data as { weightKg: number | null; restingHeartRate: number | null };
 }
 
-export async function withingsWeightLatest(accessToken: string) {
-  const u = new URL(`${API_BASE_URL}/withings/metrics/weight/latest`);
-  u.searchParams.set("access_token", accessToken);
-  const r = await fetch(u.toString());
+export async function withingsWeightLatest() {
+  const res = await apiFetch(`/withings/metrics/weight/latest`);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.detail || "withings weight latest failed");
+  return data as { value: number | null; latest_date: string | null };
+}
+
+export async function withingsMetricsDaily(date?: string) {
+  const url = new URL(`${API_BASE_URL}/withings/metrics/daily`);
+  if (date) url.searchParams.set("date", date);
+
+  const res = await apiFetch(url.toString());
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data?.detail || "withingsMetricsDaily failed");
+  }
+  return data;
+}
+
+export async function withingsHeartRate(start?: string, end?: string) {
+  const u = new URL(`/withings/metrics/heart-rate/intraday`, API_BASE_URL);
+  if (start) u.searchParams.set("start", start);
+  if (end) u.searchParams.set("end", end);
+  const r = await apiFetch(u.toString());
   const d = await r.json();
-  if (!r.ok) throw new Error(d?.detail || "withings weight latest failed");
-  // d = { value: number|null, latest_date: "YYYY-MM-DD"|null }
-  return d as { value: number | null; latest_date: string | null };
-}
-
-export async function withingsMetricsDaily(accessToken: string, date?: string) {
-  const u = new URL(`${API_BASE_URL}/withings/metrics/daily`);
-  u.searchParams.set("access_token", accessToken);
-  if (date) u.searchParams.set("date", date);
-
-  const jwt = tokens.getSession();
-  const res = await apiFetch(u.toString(), {
-    headers: jwt ? { Authorization: `Bearer ${jwt}` } : undefined,
-  });
-
-  const data = await res.json();
-  if (!res.ok) throw new Error(data?.detail || "withings daily metrics failed");
-  return data as {
-    date: string;
-    steps: number | null;
-    calories: number | null;
-    sleepHours: number | null;
-    distanceKm: number | null;
-  };
-}
-
-export async function withingsHeartRate(
-  accessToken: string,
-  start?: string,
-  end?: string
-) {
-  const u = new URL(`${API_BASE_URL}/withings/metrics/heart-rate`); // NEW
-  u.searchParams.set("access_token", accessToken); // NEW
-  if (start && end) {
-    // NEW
-    u.searchParams.set("start", start); // NEW
-    u.searchParams.set("end", end); // NEW
-  } // NEW
-  const r = await fetch(u.toString()); // NEW
-  const d = await r.json(); // NEW
-  if (!r.ok) throw new Error(d?.detail || "withings heart-rate failed"); // NEW
+  if (!r.ok) throw new Error(d?.detail || "withings heart-rate failed");
   return d as {
     latest?: { ts: number; bpm: number };
     items?: { ts: number; bpm: number }[];
-  }; // NEW
+  };
 }
 
-export async function withingsHeartRateDaily(
-  accessToken: string,
-  date?: string // YYYY-MM-DD (defaults to today on the backend)
-) {
-  const u = new URL(`${API_BASE_URL}/withings/metrics/heart-rate/daily`);
-  u.searchParams.set("access_token", accessToken);
+export async function withingsHeartRateDaily(date?: string) {
+  const u = new URL(`/withings/metrics/heart-rate/daily`, API_BASE_URL);
   if (date) u.searchParams.set("date", date);
-  const r = await fetch(u.toString());
+  const r = await apiFetch(u.toString());
   const d = await r.json();
   if (!r.ok) throw new Error(d?.detail || "withings hr daily failed");
   return d as {
@@ -373,93 +346,62 @@ export async function withingsHeartRateDaily(
     hr_average: number | null;
     hr_min: number | null;
     hr_max: number | null;
-    updatedAt: number | null; // epoch seconds (may be null)
+    updatedAt: number | null;
   };
 }
 
-export async function withingsSpO2(
-  accessToken: string,
-  start?: string,
-  end?: string
-) {
-  const u = new URL(`${API_BASE_URL}/withings/metrics/spo2`); // NEW
-  u.searchParams.set("access_token", accessToken); // NEW
+export async function withingsSpO2(start?: string, end?: string) {
+  const u = new URL(`/withings/metrics/spo2`, API_BASE_URL);
   if (start && end) {
-    // NEW
-    u.searchParams.set("start", start); // NEW
-    u.searchParams.set("end", end); // NEW
-  } // NEW
-  const r = await fetch(u.toString()); // NEW
-  const d = await r.json(); // NEW
-  if (!r.ok) throw new Error(d?.detail || "withings spo2 failed"); // NEW
+    u.searchParams.set("start", start);
+    u.searchParams.set("end", end);
+  }
+  const r = await apiFetch(u.toString());
+  const d = await r.json();
+  if (!r.ok) throw new Error(d?.detail || "withings spo2 failed");
   return d as {
     latest?: { ts: number; percent: number };
     items?: { ts: number; percent: number }[];
-  }; // NEW
+  };
 }
 
 export async function withingsTemperature(
-  accessToken: string,
   start: string,
-  end: string
+  end: string,
+  tz = "Europe/Rome"
 ) {
-  const u = new URL(`${API_BASE_URL}/withings/metrics/temperature`); // NEW
-  u.searchParams.set("access_token", accessToken); // NEW
-  u.searchParams.set("start", start); // NEW
-  u.searchParams.set("end", end); // NEW
-  const r = await fetch(u.toString()); // NEW
-  const d = await r.json(); // NEW
-  if (!r.ok) throw new Error(d?.detail || "withings temperature failed"); // NEW
+  const u = new URL(`/withings/metrics/temperature`, API_BASE_URL);
+  u.searchParams.set("start", start);
+  u.searchParams.set("end", end);
+  u.searchParams.set("tz", tz);
+  const r = await apiFetch(u.toString());
+  const d = await r.json();
+  if (!r.ok) throw new Error(d?.detail || "withings temperature failed");
   return d as {
-    // NEW
-    start: string; // NEW
-    end: string; // NEW
-    items: { ts: number; body_c: number | null; skin_c: number | null }[]; // NEW
-    latest: { ts: number; body_c: number | null; skin_c: number | null } | null;
-  }; // NEW
+    start: string;
+    end: string;
+    items: { ts: number; body_c: number | null; skin_c?: number | null }[];
+    latest: {
+      ts: number;
+      body_c: number | null;
+      skin_c?: number | null;
+    } | null;
+  };
 }
 
 export async function withingsECG(
-  accessToken: string,
   start: string,
   end: string,
-  tz: string = "Europe/Rome",
-  limit: number = 25
+  tz = "Europe/Rome",
+  limit = 25
 ) {
-  const u = new URL(`${API_BASE_URL}/withings/metrics/ecg`);
-  u.searchParams.set("access_token", accessToken);
+  const u = new URL(`/withings/metrics/ecg`, API_BASE_URL);
   u.searchParams.set("start", start);
   u.searchParams.set("end", end);
   u.searchParams.set("tz", tz);
   u.searchParams.set("limit", String(limit));
-
-  const r = await fetch(u.toString());
+  const r = await apiFetch(u.toString());
   const d = await r.json();
   if (!r.ok) throw new Error(d?.detail || "withings ECG failed");
-  return d as {
-    start: string;
-    end: string;
-    tz: string;
-    count: number;
-    items: {
-      signalid: number | null;
-      ts: number;
-      time_iso: string;
-      heart_rate: number | null;
-      afib: boolean | number | null;
-      classification: string | number | null;
-      deviceid: string | null;
-      model: number | string | null;
-    }[];
-    latest: {
-      signalid: number | null;
-      ts: number;
-      time_iso: string;
-      heart_rate: number | null;
-      afib: boolean | number | null;
-      classification: string | number | null;
-      deviceid: string | null;
-      model: number | string | null;
-    } | null;
-  };
+  return d;
 }

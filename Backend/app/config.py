@@ -14,3 +14,5 @@ FITBIT_CLIENT_SECRET = os.getenv("FITBIT_CLIENT_SECRET")
 SQLALCHEMY_DATABASE_URL = os.getenv("SQLALCHEMY_DATABASE_URL")
 
 APP_SECRET_KEY = os.getenv("APP_SECRET_KEY", "dev-insecure-change-me")
+
+REDIS_URL = os.getenv("REDIS_URL")

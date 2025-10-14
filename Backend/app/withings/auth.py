@@ -1,14 +1,17 @@
 from app.config import WITHINGS_CLIENT_ID, WITHINGS_REDIRECT_URI, WITHINGS_CLIENT_SECRET, APP_SECRET_KEY
-from fastapi import Body, APIRouter, HTTPException, status, Depends
+from app.auth.session import create_session_token, create_session_token_with_jti, decode_session_token
+from app.db.crud.session import create_session as create_session_row, revoke_session
+from fastapi import Body, APIRouter, HTTPException, status, Depends, Request
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from app.core.redis_kv import put_oauth_state, pop_oauth_state
 from app.db.crud.user import get_or_create_user_from_withings   
 from app.db.crud.withings import upsert_withings_account
 from datetime import datetime, timedelta, timezone
 from app.db.schemas import withings as db_schemas
-from app.auth.session import create_session_token
-from typing import Dict, Any
 from app.dependencies import get_db
-from urllib.parse import urlencode
 from sqlalchemy.orm import Session
+from urllib.parse import urlencode
+from typing import Dict, Any
 import requests
 import secrets
 import time
@@ -21,30 +24,8 @@ router = APIRouter()
 WITHINGS_AUTHORIZE_URL = "https://account.withings.com/oauth2_user/authorize2"
 WITHINGS_TOKEN_URL = "https://wbsapi.withings.net/v2/oauth2"
 
-# stores temporary OAuth state values
-SESSION_FILE = "withings_sessions.json"
 
-def load_sessions():
-    """Load sessions from file"""
-    try:
-        if os.path.exists(SESSION_FILE):
-            with open(SESSION_FILE, 'r') as f:
-                return json.load(f)
-        return {}
-    except Exception as e:
-        print(f"Error loading sessions: {e}")
-        return {}
-
-def save_sessions(sessions):
-    """Save sessions to file"""
-    try:
-        with open(SESSION_FILE, 'w') as f:
-            json.dump(sessions, f, indent=2)
-    except Exception as e:
-        print(f"Error saving sessions: {e}")
-
-
-withings_sessions = load_sessions()
+bearer_for_logout = HTTPBearer(auto_error=True)
 
 
 
@@ -57,15 +38,14 @@ def login_withings():
         # Generate secure state parameter
         state = secrets.token_urlsafe(32)
         
-        # Store state with timestamp
-        withings_sessions[state] = {
-            "timestamp": int(time.time()),
-            "created": time.strftime('%Y-%m-%d %H:%M:%S')
-        }
-        
-        # Save to file
-        save_sessions(withings_sessions)
-        
+        put_oauth_state(
+            state,
+            {
+                "created_at": int(time.time()),
+                "provider": "withings",
+            },
+            ttl_seconds=15 * 60,
+        )
         # Build authorization URL
         auth_params = {
             "response_type": "code",
@@ -82,7 +62,6 @@ def login_withings():
             "state": state,
             "message": "Visit the authorization_url to authorize the application",
             "debug_info": {
-                "stored_sessions": list(withings_sessions.keys()),
                 "redirect_uri": WITHINGS_REDIRECT_URI
             }
         }
@@ -156,25 +135,26 @@ def exchange_code_for_tokens(auth_code: str) -> Dict[str, Any]:
 def withings_exchange(
     payload: Dict[str, str] = Body(...),
     db: Session = Depends(get_db),
+    request: Request = None
 ):
     code = payload.get("code")
     state = payload.get("state")
     if not code or not state:
         raise HTTPException(status_code=400, detail="Missing code or state")
 
-    # validate state
-    withings_sessions = load_sessions()
-    if state not in withings_sessions:
+    state_blob = pop_oauth_state(state)
+    if not state_blob:
         raise HTTPException(status_code=400, detail="Invalid or expired state parameter")
+
 
     tokens = exchange_code_for_tokens(code) 
 
-    # cleanup state
-    try:
-        del withings_sessions[state]
-        save_sessions(withings_sessions)
-    except Exception:
-        pass
+    # # cleanup state
+    # try:
+    #     del withings_sessions[state]
+    #     save_sessions(withings_sessions)
+    # except Exception:
+    #     pass
 
     # ---- Build payload ----
     access_token = tokens.get("access_token")
@@ -219,6 +199,29 @@ def withings_exchange(
     )
     acc = upsert_withings_account(db,user.id, create_payload)
 
+    # --- Create app session (JWT + DB row) ---
+    token, jti = create_session_token_with_jti(
+        user_id=user.id,
+        auth_user_id=user.auth_user_id,
+        secret_key=APP_SECRET_KEY,
+        expires_in_days=7,
+    )
+
+    # Persist session row (revocable)
+    expires_at = datetime.utcnow() + timedelta(days=7)
+    ua = request.headers.get("user-agent") if request else None
+    ip = (request.client.host if request and request.client else None)
+
+    create_session_row(
+        db,
+        jti=jti,
+        user_id=user.id,
+        expires_at=expires_at,
+        user_agent=ua,
+        ip_address=ip,
+    )
+
+
     return {
         "message": "Authorization successful",
         "account_id": str(acc.id),
@@ -238,7 +241,6 @@ def withings_exchange(
             "ttl_days": 7
         }
     }
-
 
 @router.post("/withings/refresh")
 def refresh_withings_token(refresh_token: str):
@@ -343,6 +345,62 @@ def withings_profile(access_token: str):
 
     except requests.exceptions.RequestException:
         return {"id": None, "firstName": None, "lastName": None, "fullName": "Withings User"}
+
+@router.post("/auth/logout")
+def logout_current_session(
+    creds: HTTPAuthorizationCredentials = Depends(bearer_for_logout),
+    db: Session = Depends(get_db),
+):
+    """
+    Revoke the current app session (DB-backed).
+    Client must send: Authorization: Bearer <session JWT>
+    """
+    raw_token = creds.credentials
+    try:
+        claims = decode_session_token(raw_token, secret_key=APP_SECRET_KEY)
+    except Exception:
+        # invalid signature/expired/etc.
+        raise HTTPException(status_code=401, detail="Invalid or expired session token")
+
+    jti = claims.get("jti")
+    if not jti:
+        raise HTTPException(status_code=400, detail="Malformed token (missing 'jti')")
+
+    ok = revoke_session(db, jti)
+    return {"revoked": bool(ok)}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

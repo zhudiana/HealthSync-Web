@@ -9,6 +9,7 @@ from app.db.engine import engine
 from app.routes import users as users_routes
 
 
+
 app = FastAPI()
 app.include_router(withings_router)
 app.include_router(fitbit_router)
