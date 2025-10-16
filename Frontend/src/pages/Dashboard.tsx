@@ -234,11 +234,11 @@ export default function Dashboard() {
         } else {
           // WITHINGS (JWT-only to backend)
           try {
-            // const w = await withingsMetricsOverview();
-            // const latestW = await withingsWeightLatest();
-            // if (mounted) {
-            //   setWeight(latestW.value ?? w.weightKg ?? null);
-            // }
+            const w = await withingsMetricsOverview();
+            const latestW = await withingsWeightLatest();
+            if (mounted) {
+              setWeight(latestW.value ?? w.weightKg ?? null);
+            }
 
             // Daily snapshot (single-flight)
             await fetchWithingsDailyOnce();

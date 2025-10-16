@@ -338,10 +338,10 @@ export async function withingsHeartRate(start?: string, end?: string) {
 export async function withingsHeartRateDaily(date?: string) {
   const u = new URL(`/withings/metrics/heart-rate/daily`, API_BASE_URL);
   if (date) u.searchParams.set("date", date);
-  const r = await apiFetch(u.toString());
-  const d = await r.json();
-  if (!r.ok) throw new Error(d?.detail || "withings hr daily failed");
-  return d as {
+  const res = await apiFetch(u.toString());
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "withings hr daily failed");
+  return data as {
     date: string;
     hr_average: number | null;
     hr_min: number | null;
