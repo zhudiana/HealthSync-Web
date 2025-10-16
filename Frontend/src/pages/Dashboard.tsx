@@ -235,15 +235,14 @@ export default function Dashboard() {
           // WITHINGS (JWT-only to backend)
 
           try {
-            try {
-              const latestW = await withingsWeightLatest();
-              if (mounted) setWeight(latestW.value ?? null);
-            } catch (e) {
-              console.warn("weight/latest failed:", e);
-              if (mounted) setWeight(null);
-            }
-            await fetchWithingsDailyOnce();
-
+            const latestW = await withingsWeightLatest();
+            if (mounted) setWeight(latestW.value ?? null);
+          } catch (e) {
+            console.warn("weight/latest failed:", e);
+            if (mounted) setWeight(null);
+          }
+          await fetchWithingsDailyOnce();
+          try {
             // ECG (latest for today)
             const todayStr = ymd();
             withingsECG(todayStr, todayStr, "Europe/Rome", 1)
