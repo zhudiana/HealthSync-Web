@@ -1,24 +1,24 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import {
   fetchProfile,
   tokenInfo,
   metricsOverview,
-  metrics as fitbitMetrics,
   withingsMetricsOverview,
   withingsMetricsDaily,
   withingsSpO2,
   withingsTemperature,
   withingsHeartRateDaily,
+  metrics as fitbitMetrics,
   withingsWeightLatest,
   withingsECG,
 } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import Header from "@/components/Header";
 import MetricCard from "@/components/MetricCard";
+import { getUserByAuth, updateUserByAuth } from "@/lib/api";
 
 export default function Dashboard() {
   const { getAccessToken, profile: ctxProfile, provider } = useAuth();
-
   const [profile, setProfile] = useState<any>(ctxProfile);
   const [info, setInfo] = useState<any>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -34,17 +34,21 @@ export default function Dashboard() {
   const [tempVar, setTempVar] = useState<number | null>(null);
   const [tempUpdatedAt, setTempUpdatedAt] = useState<number | null>(null);
   const [distance, setDistance] = useState<number | null>(null);
-
   const [avgHR, setAvgHR] = useState<number | null>(null);
-  const [hrUpdatedAt, setHrUpdatedAt] = useState<number | null>(null);
+  const [hrUpdatedAt, setHrUpdatedAt] = useState<number | null>(null); // epoch seconds
   const [maxHR, setMaxHR] = useState<number | null>(null);
   const [minHR, setMinHR] = useState<number | null>(null);
-
   const [ecgHR, setEcgHR] = useState<number | null>(null);
   const [ecgTime, setEcgTime] = useState<string | null>(null);
 
-  // Single-flight guard for /withings/metrics/daily
-  const dailyInFlightRef = useRef<Promise<any> | null>(null);
+  const [appUser, setAppUser] = useState<{
+    display_name: string | null;
+    email: string | null;
+    auth_user_id?: string;
+  } | null>(null);
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState("");
+  const [savingName, setSavingName] = useState(false);
 
   // ---------- helpers ----------
   const ymd = (d = new Date()) => d.toISOString().slice(0, 10);
@@ -81,60 +85,36 @@ export default function Dashboard() {
           minute: "2-digit",
         });
 
-  // Single-flight helper for Withings daily call
-  async function fetchWithingsDailyOnce() {
-    if (!dailyInFlightRef.current) {
-      dailyInFlightRef.current = withingsMetricsDaily()
-        .then((d) => {
-          if (!d) return null;
-          setSteps(d.steps ?? null);
-          setCalories(d.calories ?? null);
-          setSleepHours(d.sleepHours ?? null);
-          setDistance(d.distanceKm ?? null);
-          return d;
-        })
-        .catch((e) => {
-          console.error("[Dash] daily error:", e);
-          return null;
-        })
-        .finally(() => {
-          // brief cooldown to avoid Withings “same arguments in <10s”
-          setTimeout(() => {
-            dailyInFlightRef.current = null;
-          }, 12_000);
-        });
-    }
-    await dailyInFlightRef.current;
-  }
-
   // ---------- initial load ----------
-
   useEffect(() => {
     let mounted = true;
+    const ac = new AbortController();
 
     (async () => {
       try {
         if (!provider) {
-          if (mounted) setErr("No provider selected.");
+          if (!mounted) return;
+          setErr("No provider selected.");
           return;
         }
 
-        // We still need an access token for Fitbit profile + metrics.
-        // For Withings, API calls are JWT-only on your server now.
         const access = await getAccessToken();
-        if (!access && provider === "fitbit") {
-          if (mounted) setErr("Not authenticated");
+        if (!access) {
+          if (!mounted) return;
+          setErr("Not authenticated");
           return;
         }
 
         // --- Load profile (provider-aware) ---
         try {
-          if (provider === "fitbit") {
-            const profResp = await fetchProfile(access as string, "fitbit");
-            if (mounted) setProfile(profResp?.user ?? null);
-          } else {
-            const profResp = await fetchProfile(access as string, "withings");
-            if (mounted) setProfile(profResp ?? { fullName: "Withings User" });
+          const profResp = await fetchProfile(access, provider);
+          const p = provider === "fitbit" ? profResp?.user : profResp;
+          if (mounted) {
+            setProfile(
+              p ?? {
+                fullName: provider === "withings" ? "Withings User" : "User",
+              }
+            );
           }
         } catch {
           if (!mounted) return;
@@ -147,7 +127,7 @@ export default function Dashboard() {
 
         // --- Metrics ---
         if (provider === "fitbit") {
-          const ov = await metricsOverview(access as string);
+          const ov = await metricsOverview(access);
           if (!mounted) return;
 
           setSteps(ov.steps ?? null);
@@ -156,19 +136,21 @@ export default function Dashboard() {
           setWeight(ov.weight ?? null);
           setDistance(ov.total_km ?? null);
 
-          // Sleep today; fallback to yesterday if needed
-          let sleep = await fitbitMetrics.sleep(access as string);
+          // Sleep today; if empty, fallback to yesterday
+          let sleep = await fitbitMetrics.sleep(access);
           let totalHours = sleep?.hoursAsleep ?? null;
+
           if (!totalHours || totalHours === 0) {
-            const s2 = await fitbitMetrics.sleep(
-              access as string,
-              ymdYesterday()
-            );
+            const y = new Date();
+            y.setDate(y.getDate() - 1);
+            const ymdStr = y.toISOString().slice(0, 10);
+            const s2 = await fitbitMetrics.sleep(access, ymdStr);
             totalHours = s2?.hoursAsleep ?? null;
           }
-          if (mounted) setSleepHours(totalHours);
+          if (!mounted) return;
+          setSleepHours(totalHours);
 
-          // HRV (daily RMSSD ms)
+          // HRV (daily RMSSD ms) – latest in a 2-day window
           try {
             const today = new Date();
             const start = ymd(
@@ -179,7 +161,7 @@ export default function Dashboard() {
               )
             );
             const end = ymd(today);
-            const h = await fitbitMetrics.hrv(access as string, start, end);
+            const h = await fitbitMetrics.hrv(access, start, end);
             if (mounted) {
               const latest = [...(h?.items ?? [])]
                 .filter((it) => typeof it.rmssd_ms === "number")
@@ -194,13 +176,13 @@ export default function Dashboard() {
           // Nightly SpO₂
           try {
             const todayStr = ymd();
-            let s = await fitbitMetrics.spo2Nightly(access as string, todayStr);
+            let s = await fitbitMetrics.spo2Nightly(access, todayStr);
             let avg = s?.average ?? null;
+
             if (avg == null) {
-              s = await fitbitMetrics.spo2Nightly(
-                access as string,
-                ymdYesterday()
-              );
+              const y = new Date();
+              y.setDate(y.getDate() - 1);
+              s = await fitbitMetrics.spo2Nightly(access, ymd(y));
               avg = s?.average ?? null;
             }
             if (mounted) setSpo2(avg);
@@ -211,11 +193,7 @@ export default function Dashboard() {
           // Skin temperature variability
           try {
             const endStr = ymd();
-            const t = await fitbitMetrics.temperature(
-              access as string,
-              endStr,
-              endStr
-            );
+            const t = await fitbitMetrics.temperature(access, endStr, endStr);
             if (mounted) {
               const last = t?.items?.[t.items.length - 1];
               setTempVar(last?.delta_c ?? null);
@@ -226,27 +204,32 @@ export default function Dashboard() {
 
           // Token info (optional)
           try {
-            const i = await tokenInfo(access as string);
+            const i = await tokenInfo(access);
             if (mounted) setInfo(i);
           } catch {
             /* ignore */
           }
         } else {
-          // WITHINGS (JWT-only to backend)
-
-          // try {
-          //   const latestW = await withingsWeightLatest();
-          //   if (mounted) setWeight(latestW.value ?? null);
-          // } catch (e) {
-          //   console.warn("weight/latest failed:", e);
-          //   if (mounted) setWeight(null);
-          // }
-
-          await fetchWithingsDailyOnce();
+          // WITHINGS
           try {
-            // ECG (latest for today)
+            const [w, d] = await Promise.all([
+              withingsMetricsOverview(access),
+              withingsMetricsDaily(access),
+            ]);
+
+            const latestW = await withingsWeightLatest(access);
+            if (!mounted) return;
+
+            setWeight(latestW.value ?? w.weightKg ?? null);
+            setRestingHR(w.restingHeartRate ?? null);
+            setSteps(d.steps ?? null);
+            setCalories(d.calories ?? null);
+            setSleepHours(d.sleepHours ?? null);
+            setDistance(d.distanceKm ?? null);
+
+            // ---- ECG ----
             const todayStr = ymd();
-            withingsECG(todayStr, todayStr, "Europe/Rome", 1)
+            withingsECG(access, todayStr, todayStr, "Europe/Rome", 1)
               .then((e) => {
                 if (!mounted) return;
                 if (e?.latest) {
@@ -264,8 +247,8 @@ export default function Dashboard() {
                 }
               });
 
-            // SpO₂ (latest)
-            withingsSpO2()
+            // ---- SpO₂ ----
+            withingsSpO2(access)
               .then((s) => {
                 if (!mounted) return;
                 setSpo2(s?.latest?.percent ?? null);
@@ -278,14 +261,13 @@ export default function Dashboard() {
                 }
               });
 
-            // Body temperature (today)
-            withingsTemperature(todayStr, todayStr)
+            // ---- Temperature ----
+            withingsTemperature(access, todayStr, todayStr)
               .then((t) => {
                 if (!mounted) return;
                 const item = t?.latest;
+                const skin = item?.skin_c ?? null;
                 const body = item?.body_c ?? null;
-                // (keep skin_c support if your API returns it)
-                const skin = (item as any)?.skin_c ?? null;
                 setTempVar(body ?? skin ?? null);
                 setTempUpdatedAt(item?.ts ?? null);
               })
@@ -296,15 +278,15 @@ export default function Dashboard() {
                 }
               });
 
-            // Heart rate daily (avg/min/max). Fallback to yesterday if empty.
+            // ---- Heart Rate ----
             try {
-              let daily = await withingsHeartRateDaily(todayStr);
+              let daily = await withingsHeartRateDaily(access, todayStr);
               if (
                 daily?.hr_average == null &&
                 daily?.hr_max == null &&
                 daily?.hr_min == null
               ) {
-                daily = await withingsHeartRateDaily(ymdYesterday());
+                daily = await withingsHeartRateDaily(access, ymdYesterday());
               }
               if (mounted) {
                 setAvgHR(daily?.hr_average ?? null);
@@ -337,14 +319,16 @@ export default function Dashboard() {
           }
         }
       } catch (e: any) {
-        if (mounted) setErr(e?.message ?? "Failed to load data");
+        if (!mounted) return;
+        setErr(e?.message ?? "Failed to load data");
       }
     })();
 
     return () => {
       mounted = false;
+      ac.abort();
     };
-  }, [provider]);
+  }, [provider, getAccessToken]);
 
   // ---------- render ----------
   if (err) {

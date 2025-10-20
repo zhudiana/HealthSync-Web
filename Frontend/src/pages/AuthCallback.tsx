@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { tokens } from "@/lib/storage";
 import { exchangeCode } from "@/lib/api"; // Fitbit: GET /fitbit/callback?code&state
-import { exchangeWithingsCode } from "@/lib/api"; // Withings: POST /withings/exchange
+import { exchangeWithingsCode } from "@/lib/api"; // We'll add this in api.ts (Step 3)
 
 type Provider = "fitbit" | "withings";
 
@@ -25,82 +25,40 @@ export default function AuthCallback() {
         const url = new URL(window.location.href);
         const code = url.searchParams.get("code");
         const state = url.searchParams.get("state");
-
-        // Prefer explicit ?provider=... in URL; else fall back to stored choice; else default fitbit
-        const providerFromUrl = url.searchParams.get(
-          "provider"
-        ) as Provider | null;
-        const providerStored =
-          (tokens.getActiveProvider() as Provider | null) || null;
-        let provider: Provider = (providerFromUrl ||
-          providerStored ||
-          "fitbit") as Provider;
+        const provider = (tokens.getActiveProvider() as Provider) || "fitbit";
 
         if (!code) throw new Error("Missing authorization code.");
         if (!state) throw new Error("Missing state parameter.");
 
-        // Call the appropriate exchange endpoint (with a safe fallback)
-        let data: any | null = null;
+        let data: any;
         if (provider === "withings") {
+          // Withings: SPA exchanges code via /withings/exchange
           data = await exchangeWithingsCode(code, state);
         } else {
-          // provider === "fitbit"
-          try {
-            data = await exchangeCode(code, state);
-          } catch (e) {
-            // If Fitbit exchange fails but this was actually a Withings callback,
-            // try Withings as a fallback.
-            try {
-              data = await exchangeWithingsCode(code, state);
-              provider = "withings";
-            } catch {
-              throw e; // rethrow original Fitbit error if Withings also fails
-            }
-          }
+          // Fitbit: backend GET /fitbit/callback does the exchange
+          data = await exchangeCode(code, state);
         }
 
-        // Be tolerant to different backend shapes
-        // - old Fitbit: { access_token, refresh_token, user_id }
-        // - Withings (yours): { withings: { access_token, refresh_token, userid } } OR { tokens: {...} }
-        // - direct Withings body: { body: { access_token, refresh_token, userid } }
-        const access =
-          data?.tokens?.access_token ??
-          data?.access_token ??
-          data?.withings?.access_token ??
-          data?.body?.access_token;
-
-        const refresh =
-          data?.tokens?.refresh_token ??
-          data?.refresh_token ??
-          data?.withings?.refresh_token ??
-          data?.body?.refresh_token;
-
+        const access = data?.tokens?.access_token ?? data?.access_token;
+        const refresh = data?.tokens?.refresh_token ?? data?.refresh_token;
         const userId =
           data?.tokens?.user_id ??
           data?.user_id ??
           data?.tokens?.userid ??
-          data?.userid ??
-          data?.withings?.userid ??
-          data?.body?.userid;
+          data?.userid;
 
-        // Optional app session JWT (keep supporting it if backend still returns it)
-        const sessionJwt = data?.session?.token;
-        if (sessionJwt) {
-          tokens.setSession(sessionJwt);
-        }
+        if (!access) throw new Error("No access token returned from server.");
 
-        if (!access) {
-          // Helpful hint for diagnosing provider mismatch during early testing
-          throw new Error("No access token returned from server.");
-        }
-
-        // Persist credentials
         tokens.setActiveProvider(provider);
-        tokens.setAccess(provider, String(access));
-        if (refresh) tokens.setRefresh(provider, String(refresh));
-        if (userId != null) tokens.setUserId(provider, String(userId));
+        tokens.setAccess(provider, access);
+        if (refresh) tokens.setRefresh(provider, refresh);
+        if (userId) tokens.setUserId(provider, String(userId));
 
         setMsg("Connected! Redirecting to your dashboard…");
+        // setTimeout(() => {
+        //   // hard replace so context re-reads storage immediately
+        //   window.location.replace("/dashboard");
+        // }, 150);
         navigate("/dashboard", { replace: true });
       } catch (err: any) {
         console.error("[AuthCallback] error:", err);
