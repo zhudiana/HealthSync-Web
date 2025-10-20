@@ -1,4 +1,17 @@
 import { useEffect, useState } from "react";
+import { motion } from "framer-motion";
+import {
+  Activity,
+  HeartPulse,
+  Thermometer,
+  Watch,
+  Gauge,
+  Droplets,
+  TrendingUp,
+  RefreshCw,
+} from "lucide-react";
+import { useAuth } from "@/context/AuthContext";
+import Header from "@/components/Header";
 import {
   fetchProfile,
   tokenInfo,
@@ -12,10 +25,62 @@ import {
   withingsWeightLatest,
   withingsECG,
 } from "@/lib/api";
-import { useAuth } from "@/context/AuthContext";
-import Header from "@/components/Header";
-import MetricCard from "@/components/MetricCard";
-import { getUserByAuth, updateUserByAuth } from "@/lib/api";
+
+/*
+  HealthSync — Dark Dashboard (v2)
+  --------------------------------
+  This file keeps your previous data-loading logic intact,
+  but renders it in a richer dark UI similar to the video: sticky top, refresh,
+  animated stat cards, subtle badges, and clearer typography.
+*/
+
+// ---------- local stat card (no shadcn version) ----------
+function StatCard({
+  title,
+  icon,
+  value,
+  unit,
+  foot,
+  pulse,
+}: {
+  title: string;
+  icon: JSX.Element;
+  value: string | number | null;
+  unit?: string;
+  foot?: string;
+  pulse?: boolean;
+}) {
+  return (
+    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+      <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 backdrop-blur-sm">
+        <div className="flex items-center justify-between pb-2">
+          <div className="flex items-center gap-2 text-zinc-300">
+            {icon}
+            <div className="text-sm font-medium text-zinc-300">{title}</div>
+          </div>
+          {pulse && (
+            <span className="inline-flex h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+          )}
+        </div>
+        <div className="pt-0">
+          <div className="flex items-end justify-between gap-4">
+            <div>
+              <div className="text-3xl font-semibold text-white">
+                {value ?? "—"}
+                {unit && (
+                  <span className="ml-2 text-base font-normal text-zinc-400">
+                    {unit}
+                  </span>
+                )}
+              </div>
+              {foot && <div className="mt-1 text-xs text-zinc-400">{foot}</div>}
+            </div>
+          </div>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
 
 export default function Dashboard() {
   const { getAccessToken, profile: ctxProfile, provider } = useAuth();
@@ -40,15 +105,6 @@ export default function Dashboard() {
   const [minHR, setMinHR] = useState<number | null>(null);
   const [ecgHR, setEcgHR] = useState<number | null>(null);
   const [ecgTime, setEcgTime] = useState<string | null>(null);
-
-  const [appUser, setAppUser] = useState<{
-    display_name: string | null;
-    email: string | null;
-    auth_user_id?: string;
-  } | null>(null);
-  const [editingName, setEditingName] = useState(false);
-  const [nameDraft, setNameDraft] = useState("");
-  const [savingName, setSavingName] = useState(false);
 
   // ---------- helpers ----------
   const ymd = (d = new Date()) => d.toISOString().slice(0, 10);
@@ -85,7 +141,7 @@ export default function Dashboard() {
           minute: "2-digit",
         });
 
-  // ---------- initial load ----------
+  // ---------- initial load (kept from your previous code) ----------
   useEffect(() => {
     let mounted = true;
     const ac = new AbortController();
@@ -331,125 +387,174 @@ export default function Dashboard() {
   }, [provider, getAccessToken]);
 
   // ---------- render ----------
+  const greetName =
+    profile?.displayName ||
+    profile?.fullName?.trim() ||
+    [profile?.firstName, profile?.lastName].filter(Boolean).join(" ") ||
+    (provider === "withings" ? "Withings User" : "User");
+
+  const tempLabel =
+    provider === "withings" ? "Body Temperature" : "Skin Temperature Variation";
+
   if (err) {
     return (
       <>
         <Header />
         <div className="min-h-[calc(100vh-56px)] grid place-items-center px-4">
-          <div className="max-w-lg w-full p-6 rounded-xl border border-white/10">
+          <div className="max-w-lg w-full p-6 rounded-xl border border-white/10 text-red-300">
             <p className="mb-4">Error: {err}</p>
+            <button
+              onClick={() => location.reload()}
+              className="inline-flex items-center rounded-md border border-zinc-700 bg-transparent px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-800"
+            >
+              <RefreshCw className="h-4 w-4 mr-2" /> Try again
+            </button>
           </div>
         </div>
       </>
     );
   }
 
-  const greetName =
-    profile?.displayName ||
-    profile?.fullName?.trim() ||
-    [profile?.firstName, profile?.lastName].filter(Boolean).join(" ") ||
-    "User";
-
-  const tempLabel =
-    provider === "withings" ? "Body Temperature" : "Skin Temperature Variation";
-
   return (
-    <>
+    <div className="min-h-screen bg-zinc-950 text-zinc-100">
+      {/* Sticky top controls */}
+      <div className="sticky top-0 z-40 border-b border-zinc-800/80 bg-zinc-950/70 backdrop-blur supports-[backdrop-filter]:bg-zinc-950/50">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3">
+          <div className="flex items-center gap-3">
+            <Watch className="h-5 w-5" />
+            <span className="text-lg font-semibold">HealthSync</span>
+            <span className="rounded-md border border-zinc-700 bg-zinc-800 px-2 py-0.5 text-xs text-zinc-200">
+              {provider === "withings" ? "Withings" : "Fitbit"}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              className="inline-flex items-center rounded-md border border-zinc-700 bg-transparent px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-800"
+              onClick={() => location.reload()}
+            >
+              <RefreshCw className="mr-2 h-4 w-4" /> Refresh
+            </button>
+          </div>
+        </div>
+      </div>
+
       <Header />
-      <main className="max-w-6xl mx-auto p-4 md:p-8 space-y-8">
+      <main className="max-w-7xl mx-auto p-4 md:p-8 space-y-8">
         <section className="space-y-1">
-          <h2 className="text-2xl md:text-3xl font-bold tracking-tight">
-            Dashboard
-          </h2>
-          <p className="text-muted-foreground">
+          <h2 className="text-3xl font-bold tracking-tight">Dashboard</h2>
+          <p className="text-zinc-400">
             Welcome back, {greetName}. Here’s a snapshot of your health today.
           </p>
         </section>
 
-        <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <MetricCard title="Weight" value={fmtKg(weight)} sub="kg" />
-
-          <MetricCard
-            title="Distance"
-            value={distance != null ? Number(distance).toFixed(2) : "—"}
-            sub="km"
+        {/* Metric grid (video aesthetic) */}
+        <section className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+          <StatCard
+            title="Weight"
+            icon={<Gauge className="h-4 w-4" />}
+            value={fmtKg(weight)}
+            unit="kg"
+            foot="Latest"
           />
 
-          <MetricCard title="Steps" value={steps ?? "—"} sub="today" />
+          <StatCard
+            title="Distance"
+            icon={<Activity className="h-4 w-4" />}
+            value={distance != null ? Number(distance).toFixed(2) : "—"}
+            unit="km"
+          />
+
+          <StatCard
+            title="Steps"
+            icon={<TrendingUp className="h-4 w-4" />}
+            value={steps ?? "—"}
+            unit="today"
+            pulse
+          />
 
           {provider === "fitbit" ? (
             <>
-              <MetricCard
+              <StatCard
                 title="Sleep (total)"
+                icon={<Watch className="h-4 w-4" />}
                 value={fmtHMFromHours(sleepHours)}
-                sub=""
               />
-              <MetricCard
+              <StatCard
                 title="Calories"
+                icon={<Activity className="h-4 w-4" />}
                 value={calories ?? "—"}
-                sub="today"
+                unit="today"
               />
             </>
           ) : null}
 
           {provider === "withings" ? (
-            <MetricCard
+            <StatCard
               title="Oxygen Saturation (SpO₂)"
+              icon={<Droplets className="h-4 w-4" />}
               value={fmtNumber(spo2, 1)}
-              sub={spo2UpdatedAt ? `% • ${fmtTimeHM(spo2UpdatedAt)}` : "%"}
+              unit={spo2UpdatedAt ? `% • ${fmtTimeHM(spo2UpdatedAt)}` : "%"}
             />
           ) : (
-            <MetricCard
+            <StatCard
               title="Blood Oxygen (SpO₂)"
+              icon={<Droplets className="h-4 w-4" />}
               value={fmtNumber(spo2, 1)}
-              sub="%"
+              unit="%"
             />
           )}
 
-          <MetricCard
+          <StatCard
             title={tempLabel}
+            icon={<Thermometer className="h-4 w-4" />}
             value={fmtNumber(tempVar, 1)}
-            sub={tempUpdatedAt ? `°C • ${fmtTimeHM(tempUpdatedAt)}` : "°C"}
+            unit={tempUpdatedAt ? `°C • ${fmtTimeHM(tempUpdatedAt)}` : "°C"}
           />
 
           {provider === "withings" ? (
             <>
-              <MetricCard
+              <StatCard
                 title="Average Heart Rate"
+                icon={<HeartPulse className="h-4 w-4" />}
                 value={avgHR != null ? Math.round(avgHR) : "—"}
-                sub={hrUpdatedAt ? `bpm • ${fmtTimeHM(hrUpdatedAt)}` : "bpm"}
+                unit={hrUpdatedAt ? `bpm • ${fmtTimeHM(hrUpdatedAt)}` : "bpm"}
               />
-              <MetricCard
+              <StatCard
                 title="Max Heart Rate (Today)"
+                icon={<HeartPulse className="h-4 w-4" />}
                 value={maxHR != null ? Math.round(maxHR) : "—"}
-                sub="bpm"
+                unit="bpm"
               />
-              <MetricCard
+              <StatCard
                 title="Min Heart Rate (Today)"
+                icon={<HeartPulse className="h-4 w-4" />}
                 value={minHR != null ? Math.round(minHR) : "—"}
-                sub="bpm"
+                unit="bpm"
               />
             </>
           ) : (
             <>
-              <MetricCard
+              <StatCard
                 title="Resting Heart Rate (RHR)"
+                icon={<HeartPulse className="h-4 w-4" />}
                 value={restingHR ?? "—"}
-                sub="bpm"
+                unit="bpm"
               />
-              <MetricCard
+              <StatCard
                 title="Heart Rate Variability (HRV)"
+                icon={<HeartPulse className="h-4 w-4" />}
                 value={hrv ?? "—"}
-                sub="ms"
+                unit="ms"
               />
             </>
           )}
 
           {provider === "withings" && (
-            <MetricCard
+            <StatCard
               title="ECG (Latest)"
+              icon={<HeartPulse className="h-4 w-4" />}
               value={ecgHR != null ? Math.round(ecgHR) : "—"}
-              sub={
+              unit={
                 ecgTime
                   ? `bpm • ${new Date(ecgTime).toLocaleTimeString([], {
                       hour: "2-digit",
@@ -461,6 +566,6 @@ export default function Dashboard() {
           )}
         </section>
       </main>
-    </>
+    </div>
   );
 }
