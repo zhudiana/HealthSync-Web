@@ -26,14 +26,12 @@ from app.db.crud.metrics import (
     )
 
 
-
 router = APIRouter(tags=["Withings Metrics"], prefix="/withings/metrics")
 
 MEASURE_URL = "https://wbsapi.withings.net/measure"
 MEASURE_V2_URL = "https://wbsapi.withings.net/v2/measure"
 SLEEP_V2_URL = "https://wbsapi.withings.net/v2/sleep"
 HEART_V2_URL = "https://wbsapi.withings.net/v2/heart"
-
 
 
 def _auth(access_token: str) -> dict:
@@ -1044,7 +1042,6 @@ def temperature(
 
 
 
-
 @router.get("/sleep")
 def sleep_summary(access_token: str,
                   date: str = Query(default=None, description="YYYY-MM-DD (defaults to today)")):
@@ -1073,6 +1070,7 @@ def sleep_summary(access_token: str,
             total_sec += data["asleepduration"]
     hours = round(total_sec / 3600.0, 2) if total_sec else None
     return {"date": date, "sleepHours": hours}
+
 
 
 @router.get("/ecg")
@@ -1281,3 +1279,9 @@ def hrv_nightly(
         "items": items,
         "latest": (items[-1] if items else None)
     }
+
+
+
+
+
+

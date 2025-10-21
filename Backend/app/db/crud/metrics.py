@@ -2,7 +2,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Iterable, Mapping
 from sqlalchemy.orm import Session
-from sqlalchemy import insert
+from sqlalchemy.dialects.postgresql import insert
 from app.db.models.metrics import MetricDaily, MetricIntraday
 from app.db.models.steps import StepsDaily, StepsIntraday
 from app.db.models.distance import DistanceDaily, DistanceIntraday
