@@ -1,14 +1,11 @@
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy import String, DateTime
 from datetime import datetime
 import uuid
 from app.db.base import Base
-from typing import TYPE_CHECKING
-# from app.db.models.session import Session
 
-if TYPE_CHECKING:
-    from app.db.models.session import Session
+
 
 class User(Base):
     __tablename__ = "users"
@@ -21,9 +18,3 @@ class User(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     
-    sessions: Mapped[list["Session"]] = relationship(
-        "Session",
-        back_populates="user",
-        cascade="all, delete-orphan",
-        lazy="selectin",
-    )

@@ -9,7 +9,6 @@ from app.db.engine import engine
 from app.routes import users as users_routes
 
 
-
 app = FastAPI()
 app.include_router(withings_router)
 app.include_router(fitbit_router)
@@ -19,7 +18,7 @@ app.include_router(users_routes.router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[  
-        "http://localhost:8080",
+        # "http://localhost:8080",
         "https://health-sync-web.vercel.app"
         ],
     allow_credentials=True,

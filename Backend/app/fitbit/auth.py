@@ -1,12 +1,20 @@
-from fastapi import APIRouter, HTTPException, status
+from app.config import FITBIT_CLIENT_ID, FITBIT_CLIENT_SECRET, FITBIT_REDIRECT_URI
+from fastapi import APIRouter, HTTPException, status, Body, Depends
+from app.core.redis_kv import put_oauth_state, pop_oauth_state
+from app.db.crud.user import get_or_create_user_from_fitbit
+from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
+from typing import Optional, Dict, Any
+from app.dependencies import get_db
+from app.db.schemas import fitbit as db_schemas
+from app.db.crud.fitbit import upsert_fitbit_account
 import base64
 import requests
 import hashlib
 import secrets
 import urllib.parse
-from typing import Optional, Dict, Any
-from app.config import FITBIT_CLIENT_ID, FITBIT_CLIENT_SECRET, FITBIT_REDIRECT_URI
+
 
 
 router = APIRouter(prefix="/fitbit", tags=["Fitbit Auth"])
@@ -50,63 +58,157 @@ def generate_pkce_values() -> PKCEValues:
     )
 
 
+# @router.get("/login")
+# def login_fitbit():
+#     """
+#     Step 1 & 2: Generate PKCE values and redirect user to Fitbit authorization page
+#     """
+#     FITBIT_SCOPES = "activity heartrate sleep temperature oxygen_saturation weight profile settings"
+
+#     try:
+#         # Generate PKCE values
+#         pkce_values = generate_pkce_values()
+        
+#         # Store PKCE values and state in session
+#         oauth_sessions[pkce_values.state] = {
+#             "code_verifier": pkce_values.code_verifier,
+#             "code_challenge": pkce_values.code_challenge,
+#             "timestamp": secrets.token_hex(16)  # For session cleanup
+#         }
+        
+#         # Build authorization URL
+#         auth_params = {
+#             "client_id": FITBIT_CLIENT_ID,
+#             "response_type": "code",
+#             "code_challenge": pkce_values.code_challenge,
+#             "code_challenge_method": "S256",
+#             "scope": FITBIT_SCOPES,
+#             "state": pkce_values.state,
+#             "redirect_uri": FITBIT_REDIRECT_URI,
+#             "prompt": "consent",
+#             "include_granted_scopes": "true",
+#         }
+        
+#         auth_url = f"{FITBIT_AUTHORIZE_URL}?{urllib.parse.urlencode(auth_params)}"
+        
+#         return {
+#             "authorization_url": auth_url,
+#             "state": pkce_values.state,
+#             "redirect_uri": FITBIT_REDIRECT_URI,
+#             "requested_scopes": FITBIT_SCOPES,
+#             "message": "Visit the authorization_url to authorize the application"
+#         }
+        
+#     except Exception as e:
+#         raise HTTPException(
+#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+#             detail=f"Error generating authorization URL: {str(e)}"
+#         )
+
 @router.get("/login")
 def login_fitbit():
-    """
-    Step 1 & 2: Generate PKCE values and redirect user to Fitbit authorization page
-    
-    Available scopes:
-    - activity: Access to activities, steps, distance, calories burned, and active minutes
-    - heartrate: Access to heart rate data
-    - location: Access to GPS data
-    - nutrition: Access to food logging data
-    - profile: Access to profile information
-    - settings: Access to user settings
-    - sleep: Access to sleep data
-    - social: Access to friends and leaderboards
-    - weight: Access to weight and body fat data
-    """
     FITBIT_SCOPES = "activity heartrate sleep temperature oxygen_saturation weight profile settings"
+    pkce = generate_pkce_values()
 
+    # Save state + code_verifier via Redis (15 min TTL)
+    put_oauth_state(
+        pkce.state,
+        {
+            "provider": "fitbit",
+            "code_verifier": pkce.code_verifier,
+            "created_at": int(datetime.now(tz=timezone.utc).timestamp()),
+        },
+        ttl_seconds=15 * 60,
+    )
+
+    auth_params = {
+        "client_id": FITBIT_CLIENT_ID,
+        "response_type": "code",
+        "code_challenge": pkce.code_challenge,
+        "code_challenge_method": "S256",
+        "scope": FITBIT_SCOPES,
+        "state": pkce.state,
+        "redirect_uri": FITBIT_REDIRECT_URI,
+        "prompt": "consent",
+        "include_granted_scopes": "true",
+    }
+    url = f"{FITBIT_AUTHORIZE_URL}?{urllib.parse.urlencode(auth_params)}"
+    return {"authorization_url": url, "state": pkce.state, "redirect_uri": FITBIT_REDIRECT_URI}
+
+@router.post("/exchange")
+def fitbit_exchange(
+    payload: Dict[str, str] = Body(...),
+    db: Session = Depends(get_db),
+):
+    code = payload.get("code")
+    state = payload.get("state")
+    if not code or not state:
+        raise HTTPException(status_code=400, detail="Missing code or state")
+
+    state_blob = pop_oauth_state(state)
+    if not state_blob:
+        raise HTTPException(status_code=400, detail="Invalid or expired state parameter")
+
+    code_verifier = (state_blob or {}).get("code_verifier")
+    if not code_verifier:
+        raise HTTPException(status_code=400, detail="Missing PKCE code_verifier for this state")
+
+    # 1) Exchange code → tokens (Fitbit returns user_id here)
+    tokens = exchange_code_for_tokens(code, code_verifier)
+    access_token = tokens.get("access_token")
+    refresh_token = tokens.get("refresh_token")
+    scope = tokens.get("scope")
+    token_type = tokens.get("token_type")
+    fitbit_uid = str(tokens.get("user_id") or "")
+
+    expires_in = tokens.get("expires_in")
+    expires_at = (
+        datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
+        if isinstance(expires_in, (int, float)) else None
+    )
+
+    # 2) Optional: fetch profile for a friendly name
+    full_name = None
     try:
-        # Generate PKCE values
-        pkce_values = generate_pkce_values()
-        
-        # Store PKCE values and state in session
-        oauth_sessions[pkce_values.state] = {
-            "code_verifier": pkce_values.code_verifier,
-            "code_challenge": pkce_values.code_challenge,
-            "timestamp": secrets.token_hex(16)  # For session cleanup
-        }
-        
-        # Build authorization URL
-        auth_params = {
-            "client_id": FITBIT_CLIENT_ID,
-            "response_type": "code",
-            "code_challenge": pkce_values.code_challenge,
-            "code_challenge_method": "S256",
-            "scope": FITBIT_SCOPES,
-            "state": pkce_values.state,
-            "redirect_uri": FITBIT_REDIRECT_URI,
-            "prompt": "consent",
-            "include_granted_scopes": "true",
-        }
-        
-        auth_url = f"{FITBIT_AUTHORIZE_URL}?{urllib.parse.urlencode(auth_params)}"
-        
-        return {
-            "authorization_url": auth_url,
-            "state": pkce_values.state,
-            "redirect_uri": FITBIT_REDIRECT_URI,
-            "requested_scopes": FITBIT_SCOPES,
-            "message": "Visit the authorization_url to authorize the application"
-        }
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error generating authorization URL: {str(e)}"
-        )
+        prof = get_user_profile(access_token)  # your existing GET /fitbit/user-profile logic
+        # Fitbit profile shape: {"user": {"displayName": "...", "fullName": "...", ...}}
+        user_obj = (prof or {}).get("user") or {}
+        full_name = user_obj.get("fullName") or user_obj.get("displayName")
+    except Exception:
+        pass
+
+    # 3) Create/find app user (auth_user_id = "fitbit:{user_id}")
+    user = get_or_create_user_from_fitbit(db, fitbit_uid, full_name)
+
+    # 4) Upsert Fitbit account row (store refresh_token, not access_token)
+    create_payload = db_schemas.FitbitAccountCreate(
+        fitbit_user_id=fitbit_uid,
+        full_name=full_name,
+        email=None,
+        timezone=None,
+        refresh_token=refresh_token,
+        scope=scope,
+        token_type=token_type,
+        expires_at=expires_at,
+    )
+    acc = upsert_fitbit_account(db, user.id, create_payload)
+
+    return {
+        "message": "Authorization successful",
+        "account_id": str(acc.id),
+        "fitbit_user_id": acc.fitbit_user_id,
+        "full_name": acc.full_name,
+        "app_user": {
+            "id": str(user.id),
+            "auth_user_id": user.auth_user_id,
+            "display_name": user.display_name,
+        },
+        "expires_at": acc.expires_at.isoformat() if acc.expires_at else None,
+        "scope": acc.scope,
+        "tokens": tokens,
+    }
+
+
 
 @router.get("/callback")
 def fitbit_callback(code: str, state: str, error: Optional[str] = None):
