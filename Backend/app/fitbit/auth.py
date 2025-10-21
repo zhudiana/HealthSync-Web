@@ -209,50 +209,50 @@ def fitbit_exchange(
     }
 
 
+# @router.get("/callback")
+# def fitbit_callback(code: str, state: str, error: Optional[str] = None):
+#     """
+#     Step 3 & 4: Handle the callback from Fitbit and exchange authorization code for tokens
+#     """
+#     try:
+#         # Check for authorization error
+#         if error:
+#             raise HTTPException(
+#                 status_code=status.HTTP_400_BAD_REQUEST,
+#                 detail=f"Authorization failed: {error}"
+#             )
+        
+#         # Validate state parameter (CSRF protection)
+#         if state not in oauth_sessions:
+#             raise HTTPException(
+#                 status_code=status.HTTP_400_BAD_REQUEST,
+#                 detail="Invalid or expired state parameter"
+#             )
+        
+#         session_data = oauth_sessions[state]
+#         code_verifier = session_data["code_verifier"]
+        
+#         # Exchange authorization code for tokens
+#         token_response = exchange_code_for_tokens(code, code_verifier)
+        
+#         # Clean up session data
+#         del oauth_sessions[state]
+        
+#         return {
+#             "message": "Authorization successful",
+#             "tokens": token_response,
+#             "user_id": token_response.get("user_id")
+#         }
+        
+#     except HTTPException:
+#         # Re-raise HTTP exceptions
+#         raise
+#     except Exception as e:
+#         raise HTTPException(
+#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+#             detail=f"Error processing callback: {str(e)}"
+#         )
 
-@router.get("/callback")
-def fitbit_callback(code: str, state: str, error: Optional[str] = None):
-    """
-    Step 3 & 4: Handle the callback from Fitbit and exchange authorization code for tokens
-    """
-    try:
-        # Check for authorization error
-        if error:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Authorization failed: {error}"
-            )
-        
-        # Validate state parameter (CSRF protection)
-        if state not in oauth_sessions:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid or expired state parameter"
-            )
-        
-        session_data = oauth_sessions[state]
-        code_verifier = session_data["code_verifier"]
-        
-        # Exchange authorization code for tokens
-        token_response = exchange_code_for_tokens(code, code_verifier)
-        
-        # Clean up session data
-        del oauth_sessions[state]
-        
-        return {
-            "message": "Authorization successful",
-            "tokens": token_response,
-            "user_id": token_response.get("user_id")
-        }
-        
-    except HTTPException:
-        # Re-raise HTTP exceptions
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error processing callback: {str(e)}"
-        )
 
 def exchange_code_for_tokens(auth_code: str, code_verifier: str) -> Dict[str, Any]:
     """
