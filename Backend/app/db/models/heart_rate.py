@@ -48,8 +48,8 @@ class HeartRateIntraday(Base):
     start_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     end_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
-    resolution: Mapped[str] = mapped_column(String(8), nullable=False)  # e.g., "1m", "5s"
-    samples_json: Mapped[str] = mapped_column(Text, nullable=False)     # JSON array of {t, v}
+    resolution: Mapped[str] = mapped_column(String(8), nullable=False)
+    samples_json: Mapped[str] = mapped_column(Text, nullable=False)     
 
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow,
                                                  onupdate=datetime.utcnow, nullable=False)

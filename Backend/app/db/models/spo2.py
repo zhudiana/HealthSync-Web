@@ -26,8 +26,8 @@ class SpO2Reading(Base):
     avg_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
     min_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
 
-    type: Mapped[str | None] = mapped_column(SpO2Type, index=True, nullable=True)  # nightly | spot
-    reading_id: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)  # provider id
+    type: Mapped[str | None] = mapped_column(SpO2Type, index=True, nullable=True) 
+    reading_id: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow,

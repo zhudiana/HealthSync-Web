@@ -6,10 +6,25 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.orm import Session
 from app.dependencies import get_db, get_current_user_optional
 from app.db.models import WithingsAccount, User
-from sqlalchemy.dialects.postgresql import insert
-from app.db.models.steps import StepsDaily, StepsIntraday
-from app.db.models.distance import DistanceDaily, DistanceIntraday
-from app.db.models.daily_snapshot import DailySnapshot
+import json
+from app.db.crud.metrics import (
+    _bulk_upsert_distance_intraday, 
+    _bulk_upsert_steps_intraday, 
+    _update_snapshot_ecg, 
+    _update_snapshot_hr, 
+    _update_snapshot_spo2, 
+    _update_snapshot_temperature, 
+    _update_snapshot_weight, 
+    _upsert_daily_snapshot, 
+    _upsert_distance_daily, 
+    _upsert_ecg_record, 
+    _upsert_hr_daily, 
+    _upsert_spo2_reading, 
+    _upsert_steps_daily, 
+    _upsert_temperature_reading, 
+    _upsert_weight_reading
+    )
+
 
 
 router = APIRouter(tags=["Withings Metrics"], prefix="/withings/metrics")
@@ -19,8 +34,11 @@ MEASURE_V2_URL = "https://wbsapi.withings.net/v2/measure"
 SLEEP_V2_URL = "https://wbsapi.withings.net/v2/sleep"
 HEART_V2_URL = "https://wbsapi.withings.net/v2/heart"
 
+
+
 def _auth(access_token: str) -> dict:
     return {"Authorization": f"Bearer {access_token}"}
+
 
 def _post(url: str, headers: dict, data: dict, timeout: int = 30):
     r = requests.post(url, headers=headers, data=data, timeout=timeout)
@@ -36,8 +54,10 @@ def _post(url: str, headers: dict, data: dict, timeout: int = 30):
     return j
 
 
+
 def _user_tz(headers) -> ZoneInfo:
     return ZoneInfo("Europe/Rome")
+
 
 
 def _resolve_user_and_tz(
@@ -84,134 +104,6 @@ def _resolve_user_and_tz(
 
     return user, (acc.timezone or "UTC")
 
-
-
-def _upsert_steps_daily(
-    db,
-    *,
-    user_id,
-    provider: str,
-    date_local,            # datetime.date
-    steps: int | None,
-    calories: float | None = None,
-):
-    ins = insert(StepsDaily).values(
-        user_id=user_id,
-        provider=provider,
-        date_local=date_local,
-        steps=steps,
-        calories=calories,
-    )
-    update_cols = {
-        "steps": ins.excluded.steps,
-        "calories": ins.excluded.calories,
-        "updated_at": datetime.utcnow(),
-    }
-    stmt = ins.on_conflict_do_update(
-        index_elements=["user_id", "provider", "date_local"],
-        set_=update_cols,
-    )
-    db.execute(stmt)
-
-
-
-def _upsert_distance_daily(
-    db: Session,
-    *,
-    user_id,
-    provider: str,
-    date_local,   # datetime.date
-    distance_km: float | None,
-):
-    ins = insert(DistanceDaily).values(
-        user_id=user_id,
-        provider=provider,
-        date_local=date_local,
-        distance_km=distance_km,
-    )
-    update_cols = {
-        "distance_km": ins.excluded.distance_km,
-        "updated_at": datetime.utcnow(),
-    }
-    stmt = ins.on_conflict_do_update(
-        index_elements=["user_id", "provider", "date_local"],
-        set_=update_cols,
-    )
-    db.execute(stmt)
-
-
-def _upsert_daily_snapshot(
-    db: Session,
-    *,
-    user_id,
-    provider: str,
-    date_local,
-    steps: int | None,
-    distance_km: float | None,
-    calories: float | None,
-    sleep_hours: float | None,   # hours in payload
-    tz: str | None,
-):
-    ins = insert(DailySnapshot).values(
-        user_id=user_id,
-        provider=provider,
-        date_local=date_local,
-        steps=steps,
-        distance_km=distance_km,
-        calories=calories,
-        sleep_total_min=int(sleep_hours * 60) if isinstance(sleep_hours, (int, float)) else None,
-        tz=tz,
-        source_updated_at=None,
-    )
-    update_cols = {
-        "steps": ins.excluded.steps,
-        "distance_km": ins.excluded.distance_km,
-        "calories": ins.excluded.calories,
-        "sleep_total_min": ins.excluded.sleep_total_min,
-        "tz": ins.excluded.tz,
-        "updated_at": datetime.utcnow(),
-    }
-    stmt = ins.on_conflict_do_update(
-        index_elements=["user_id", "provider", "date_local"],
-        set_=update_cols,
-    )
-    db.execute(stmt)
-
-
-def _bulk_upsert_steps_intraday(db: Session, rows: list[dict]):
-    if not rows:
-        return
-    ins = insert(StepsIntraday).values(rows)
-    update_cols = {
-        "start_at_utc": ins.excluded.start_at_utc,
-        "end_at_utc": ins.excluded.end_at_utc,
-        "samples_json": ins.excluded.samples_json,
-        "updated_at": datetime.utcnow(),
-    }
-    stmt = ins.on_conflict_do_update(
-        index_elements=["user_id", "provider", "date_local", "resolution"],
-        set_=update_cols,
-    )
-    db.execute(stmt)
-    db.commit()
-
-
-def _bulk_upsert_distance_intraday(db: Session, rows: list[dict]):
-    if not rows:
-        return
-    ins = insert(DistanceIntraday).values(rows)
-    update_cols = {
-        "start_at_utc": ins.excluded.start_at_utc,
-        "end_at_utc": ins.excluded.end_at_utc,
-        "samples_json": ins.excluded.samples_json,
-        "updated_at": datetime.utcnow(),
-    }
-    stmt = ins.on_conflict_do_update(
-        index_elements=["user_id", "provider", "date_local", "resolution"],
-        set_=update_cols,
-    )
-    db.execute(stmt)
-    db.commit()
 
 
 def _persist_daily_snapshot(db: Session, access_token: str, app_user: User | None, payload: dict):
@@ -262,6 +154,7 @@ def _persist_daily_snapshot(db: Session, access_token: str, app_user: User | Non
     db.commit()
 
 
+
 @router.get("/daily")
 def daily_metrics(
     response: Response,
@@ -276,7 +169,7 @@ def daily_metrics(
     Withings daily snapshot:
       - steps, distanceKm, (optional calories), sleepHours
       - use roll-up when present, but ALWAYS fill/override with intraday for 'today'
-    Also persists results to metrics_daily (best-effort; UI never breaks).
+    Also persists results to metrics_daily & intraday (best-effort; UI never breaks).
     """
     if not date:
         date = _date.today().isoformat()
@@ -413,6 +306,79 @@ def daily_metrics(
                         total_sec += int(data["asleepduration"])
                 sleep_hours = round(total_sec / 3600.0, 2) if total_sec else None
 
+        # ---------- 4) Persist intraday (today only) ----------
+        def _collect_metric_samples(series_obj, key: str) -> list[dict]:
+            samples = []
+            if isinstance(series_obj, list):
+                for it in series_obj or []:
+                    if isinstance(it, dict):
+                        v = it.get(key)
+                        ts = it.get("timestamp") or it.get("time")
+                        if isinstance(v, (int, float)) and isinstance(ts, (int, float)):
+                            samples.append({"t": int(ts), "v": float(v)})
+            elif isinstance(series_obj, dict):
+                # shape A: {"steps": {...}, "distance": {...}}
+                if isinstance(series_obj.get(key), dict):
+                    for ts_str, val in (series_obj[key] or {}).items():
+                        try:
+                            ts_i = int(ts_str)
+                            if isinstance(val, (int, float)):
+                                samples.append({"t": ts_i, "v": float(val)})
+                        except Exception:
+                            continue
+                # shape B: {"data": [{timestamp, steps/distance}, ...]}
+                elif isinstance(series_obj.get("data"), list):
+                    for pt in series_obj["data"]:
+                        v = pt.get(key)
+                        ts = pt.get("timestamp") or pt.get("time")
+                        if isinstance(v, (int, float)) and isinstance(ts, (int, float)):
+                            samples.append({"t": int(ts), "v": float(v)})
+            # de-dupe + sort
+            seen = set()
+            out = []
+            for s in samples:
+                if s["t"] not in seen:
+                    seen.add(s["t"])
+                    out.append(s)
+            out.sort(key=lambda x: x["t"])
+            return out
+
+        if is_today and intr_json and (intr_json.get("status") == 0):
+            body = intr_json.get("body") or {}
+            series = body.get("series")
+
+            steps_samples = _collect_metric_samples(series, "steps")
+            dist_samples  = _collect_metric_samples(series, "distance")
+
+            try:
+                user, _tz = _resolve_user_and_tz(db, access_token, app_user)
+                rows_steps = [{
+                    "user_id": user.id,
+                    "provider": "withings",
+                    "date_local": day_dt,
+                    "start_at_utc": start_dt.astimezone(ZoneInfo("UTC")),
+                    "end_at_utc": end_for_query.astimezone(ZoneInfo("UTC")),
+                    "resolution": "var",
+                    "samples_json": json.dumps(steps_samples),
+                }]
+                rows_dist = [{
+                    "user_id": user.id,
+                    "provider": "withings",
+                    "date_local": day_dt,
+                    "start_at_utc": start_dt.astimezone(ZoneInfo("UTC")),
+                    "end_at_utc": end_for_query.astimezone(ZoneInfo("UTC")),
+                    "resolution": "var",
+                    "samples_json": json.dumps(dist_samples),
+                }]
+                if steps_samples:
+                    _bulk_upsert_steps_intraday(db, rows_steps)
+                if dist_samples:
+                    _bulk_upsert_distance_intraday(db, rows_dist)
+            except Exception:
+                # best-effort cache; don’t break the response
+                pass
+
+        # ---------- 5) Build response ----------
         resp = {
             "date": dstr,
             "steps": steps,
@@ -458,6 +424,7 @@ def daily_metrics(
     return result
 
 
+
 @router.get("/overview")
 def overview(access_token: str):
     """
@@ -484,66 +451,168 @@ def overview(access_token: str):
     return {"weightKg": latest_weight, "restingHeartRate": latest_hr}
 
 
+
 @router.get("/weight/latest")
-def weight_latest(access_token: str, lookback_days: int = Query(90, ge=1, le=365)):
+def weight_latest(access_token: str, lookback_days: int = Query(90, ge=1, le=365),
+                  db: Session = Depends(get_db),
+                  app_user: User | None = Depends(get_current_user_optional)):
     """
-    Latest weight (kg) within lookback window.
+    Latest weight (kg) within lookback window. Also persists the reading + updates snapshot.
     """
     headers = _auth(access_token)
-   
     j = _post(MEASURE_URL, headers, {"action":"getmeas","meastype":"1","category":1})
     if not j:
         return {"value": None, "latest_date": None}
+
     groups = (j.get("body") or {}).get("measuregrps", [])
     latest = None
     latest_ts = -1
+    latest_group = None
+
     for g in groups:
         ts = g.get("date", -1)
         for m in g.get("measures", []):
             if m.get("type") == 1:
-                v = m.get("value")
-                u = m.get("unit",0)
+                v = m.get("value"); u = m.get("unit", 0)
                 val = v * (10 ** u) if isinstance(v,(int,float)) and isinstance(u,(int,float)) else None
                 if val is not None and ts > latest_ts:
                     latest_ts = ts
                     latest = (val, ts)
+                    latest_group = g
+
     if not latest:
         return {"value": None, "latest_date": None}
-    from datetime import datetime, timezone
-    return {"value": latest[0], "latest_date": datetime.fromtimestamp(latest[1], tz=timezone.utc).date().isoformat()}
+
+    # Persist (best-effort)
+    try:
+        user, tz_str = _resolve_user_and_tz(db, access_token, app_user)
+        from datetime import timezone
+        measured_at_utc = datetime.fromtimestamp(latest[1], tz=timezone.utc)
+
+        provider_measure_id = str(latest_group.get("grpid")) if isinstance(latest_group, dict) else None
+        device = (latest_group or {}).get("deviceid")
+        # Withings payload sometimes has tz offset; if present:
+        tz_offset_min = (latest_group or {}).get("timezone")  # often a name, not offset; keep None unless numeric
+
+        _upsert_weight_reading(
+            db,
+            user_id=user.id,
+            provider="withings",
+            measured_at_utc=measured_at_utc,
+            weight_kg=float(latest[0]),
+            fat_pct=None,
+            provider_measure_id=provider_measure_id,
+            device=str(device) if device is not None else None,
+            tz_offset_min=None,
+        )
+        _update_snapshot_weight(
+            db,
+            user_id=user.id,
+            provider="withings",
+            measured_at_utc=measured_at_utc,
+            tz_str=tz_str,
+            weight_kg=float(latest[0]),
+        )
+        db.commit()
+    except Exception:
+        # don't break the endpoint
+        pass
+
+    from datetime import timezone
+    return {
+        "value": latest[0],
+        "latest_date": datetime.fromtimestamp(latest[1], tz=timezone.utc).date().isoformat()
+    }
+
 
 
 @router.get("/weight/history")
-def weight_history(access_token: str,
-                   start: str = Query(..., description="YYYY-MM-DD"),
-                   end: str = Query(..., description="YYYY-MM-DD")):
+def weight_history(
+    access_token: str,
+    start: str = Query(..., description="YYYY-MM-DD"),
+    end: str   = Query(..., description="YYYY-MM-DD"),
+    db: Session = Depends(get_db),
+    app_user: User | None = Depends(get_current_user_optional),
+):
     headers = _auth(access_token)
-    j = _post(MEASURE_URL, headers, {"action":"getmeas","meastype":"1","category":1,"startdateymd":start,"enddateymd":end})
+    j = _post(MEASURE_URL, headers, {
+        "action":"getmeas","meastype":"1","category":1,
+        "startdateymd": start, "enddateymd": end
+    })
     if not j:
         return {"start": start, "end": end, "items": []}
+
     items = []
-    for g in (j.get("body") or {}).get("measuregrps", []):
+    groups = (j.get("body") or {}).get("measuregrps", [])
+    # Resolve user + tz once
+    try:
+        user, tz_str = _resolve_user_and_tz(db, access_token, app_user)
+    except Exception:
+        user = None
+        tz_str = None
+
+    for g in groups:
         w = None
+        ts = g.get("date")
         for m in g.get("measures", []):
             if m.get("type") == 1:
-                v = m.get("value")
-                u = m.get("unit",0)
+                v = m.get("value"); u = m.get("unit", 0)
                 w = v * (10 ** u) if isinstance(v,(int,float)) and isinstance(u,(int,float)) else None
-        if w is not None:
-            items.append({"date": _date.fromtimestamp(g.get("date")).isoformat(), "weight": w})
+        if w is not None and isinstance(ts, (int, float)):
+            day_iso = _date.fromtimestamp(ts).isoformat()
+            items.append({"date": day_iso, "weight": w})
+
+            # Persist each reading (best-effort)
+            try:
+                if user:
+                    from datetime import timezone
+                    measured_at_utc = datetime.fromtimestamp(ts, tz=timezone.utc)
+                    provider_measure_id = str(g.get("grpid")) if isinstance(g, dict) else None
+                    device = g.get("deviceid")
+
+                    _upsert_weight_reading(
+                        db,
+                        user_id=user.id,
+                        provider="withings",
+                        measured_at_utc=measured_at_utc,
+                        weight_kg=float(w),
+                        fat_pct=None,
+                        provider_measure_id=provider_measure_id,
+                        device=str(device) if device is not None else None,
+                        tz_offset_min=None,
+                    )
+                    _update_snapshot_weight(
+                        db,
+                        user_id=user.id,
+                        provider="withings",
+                        measured_at_utc=measured_at_utc,
+                        tz_str=tz_str,
+                        weight_kg=float(w),
+                    )
+            except Exception:
+                pass
+
     # optional: sort by date
     items.sort(key=lambda x: x["date"])
+    try:
+        db.commit()
+    except Exception:
+        pass
+
     return {"start": start, "end": end, "items": items}
+
 
 
 @router.get("/heart-rate/daily")
 def heart_rate_daily(
     access_token: str,
-    date: Optional[str] = Query(None, description="YYYY-MM-DD (defaults to today)")
+    date: Optional[str] = Query(None, description="YYYY-MM-DD (defaults to today)"),
+    db: Session = Depends(get_db),
+    app_user: User | None = Depends(get_current_user_optional),
 ):
     """
     Daily heart-rate roll-up from Withings (avg/min/max) for the given local day.
-    This is NOT 'resting HR'; it's the day's HR summary calculated by Withings.
+    Persists results into HeartRateDaily + DailySnapshot.
     """
     if not date:
         date = _date.today().isoformat()
@@ -553,23 +622,60 @@ def heart_rate_daily(
         "action": "getactivity",
         "startdateymd": date,
         "enddateymd": date,
-        "data_fields": "hr_average,hr_min,hr_max"
+        "data_fields": "hr_average,hr_min,hr_max",
     }
     j = _post(MEASURE_V2_URL, headers, payload)
     if not j:
-        return {"date": date, "hr_average": None, "hr_min": None, "hr_max": None, "updatedAt": None}
+        return {"date": date, "avg_bpm": None, "min_bpm": None, "max_bpm": None, "updatedAt": None}
 
     acts = (j.get("body") or {}).get("activities") or []
     a0 = acts[0] if acts else {}
     updated_at = a0.get("modified") or a0.get("date")  # epoch seconds if present
 
+    avg_bpm = a0.get("hr_average")
+    min_bpm = a0.get("hr_min")
+    max_bpm = a0.get("hr_max")
+
+    # Persist (best-effort)
+    try:
+        user, _tz = _resolve_user_and_tz(db, access_token, app_user)
+        date_local = datetime.fromisoformat(date).date()
+
+        _upsert_hr_daily(
+            db,
+            user_id=user.id,
+            provider="withings",
+            date_local=date_local,
+            avg_bpm=float(avg_bpm) if isinstance(avg_bpm, (int, float)) else None,
+            min_bpm=float(min_bpm) if isinstance(min_bpm, (int, float)) else None,
+            max_bpm=float(max_bpm) if isinstance(max_bpm, (int, float)) else None,
+        )
+
+        _update_snapshot_hr(
+            db,
+            user_id=user.id,
+            provider="withings",
+            date_local=date_local,
+            avg_bpm=float(avg_bpm) if isinstance(avg_bpm, (int, float)) else None,
+            min_bpm=float(min_bpm) if isinstance(min_bpm, (int, float)) else None,
+            max_bpm=float(max_bpm) if isinstance(max_bpm, (int, float)) else None,
+        )
+
+        db.commit()
+    except Exception:
+        pass
+
     return {
-        "date": date,
-        "hr_average": a0.get("hr_average"),
-        "hr_min": a0.get("hr_min"),
-        "hr_max": a0.get("hr_max"),
-        "updatedAt": updated_at  # epoch seconds or None
+       "date": date,
+        "hr_average": avg_bpm,
+        "hr_min": min_bpm,
+        "hr_max": max_bpm,
+        "avg_bpm": avg_bpm,
+        "min_bpm": min_bpm,
+        "max_bpm": max_bpm,
+        "updatedAt": updated_at,
     }
+
 
 
 @router.get("/heart-rate/intraday")
@@ -762,29 +868,78 @@ def heart_rate_intraday(
     return resp
 
 
+
 @router.get("/spo2")
-def spo2(access_token: str,
-         start: Optional[str] = Query(None, description="YYYY-MM-DD"),
-         end: Optional[str] = Query(None, description="YYYY-MM-DD")):
+def spo2(
+    access_token: str,
+    start: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    end: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    db: Session = Depends(get_db),
+    app_user: User | None = Depends(get_current_user_optional),
+):
     """
-    Latest or range of SpO₂ (%).
+    Latest or range of SpO₂ (%). Persists each reading and updates the daily snapshot.
     """
     headers = _auth(access_token)
-    payload = {"action":"getmeas","meastype":"54","category":1}
+    payload = {"action": "getmeas", "meastype": "54", "category": 1}
     if start and end:
         payload.update({"startdateymd": start, "enddateymd": end})
     j = _post(MEASURE_URL, headers, payload)
     if not j:
         return {"items": []}
+
     items = []
-    for g in (j.get("body") or {}).get("measuregrps", []):
+    groups = (j.get("body") or {}).get("measuregrps", [])
+
+    # Resolve user + tz once (best-effort)
+    try:
+        user, tz_str = _resolve_user_and_tz(db, access_token, app_user)
+    except Exception:
+        user = None
+        tz_str = None
+
+    for g in groups:
+        ts = g.get("date")
+        reading_id = str(g.get("grpid")) if isinstance(g, dict) else None
+
         for m in g.get("measures", []):
             if m.get("type") == 54:
-                v = m.get("value")
-                u = m.get("unit",0)
-                p = v * (10 ** u) if isinstance(v,(int,float)) and isinstance(u,(int,float)) else None
+                v = m.get("value"); u = m.get("unit", 0)
+                p = v * (10 ** u) if isinstance(v, (int, float)) and isinstance(u, (int, float)) else None
                 if p is not None:
-                    items.append({"ts": g.get("date"), "percent": p})
+                    items.append({"ts": ts, "percent": p})
+                    # Persist (best-effort)
+                    try:
+                        if user and isinstance(ts, (int, float)):
+                            from datetime import timezone
+                            measured_at_utc = datetime.fromtimestamp(ts, tz=timezone.utc)
+                            _upsert_spo2_reading(
+                                db,
+                                user_id=user.id,
+                                provider="withings",
+                                measured_at_utc=measured_at_utc,
+                                avg_pct=float(p),
+                                min_pct=None,
+                                type_="spot",
+                                reading_id=reading_id,
+                            )
+                            _update_snapshot_spo2(
+                                db,
+                                user_id=user.id,
+                                provider="withings",
+                                measured_at_utc=measured_at_utc,
+                                tz_str=tz_str,
+                                avg_pct=float(p),
+                            )
+                    except Exception:
+                        pass
+
+    # Commit once
+    try:
+        db.commit()
+    except Exception:
+        pass
+
     if not (start and end) and items:
         latest = max(items, key=lambda x: x["ts"])
         return {"latest": latest}
@@ -798,10 +953,12 @@ def temperature(
     start: str = Query(..., description="YYYY-MM-DD"),
     end: str   = Query(..., description="YYYY-MM-DD"),
     tz: str    = Query("UTC", description="IANA tz like Europe/Rome"),
+    db: Session = Depends(get_db),
+    app_user: User | None = Depends(get_current_user_optional),
 ):
     """
     Manual body temperature (attrib=2), °C.
-    Always returns newest entry first.
+    Always returns newest entry first. Also persists readings and updates the daily snapshot.
     """
     from zoneinfo import ZoneInfo
     import datetime as dt
@@ -816,22 +973,66 @@ def temperature(
     j = _post(MEASURE_URL, headers, payload)
 
     items = []
+    # Resolve user + tz (best-effort)
+    try:
+        user, tz_str = _resolve_user_and_tz(db, access_token, app_user)
+    except Exception:
+        user = None
+        tz_str = tz
+
     for g in (j or {}).get("body", {}).get("measuregrps", []):
         if g.get("attrib") != 2:     # manual only
             continue
         ts = g.get("date")
+        body_val = None
+
         for m in g.get("measures", []):
             if m.get("type") == 71:
                 v, u = m.get("value"), m.get("unit", 0)
-                val = v * (10 ** u)
-                items.append({
-                    "ts": ts,
-                    "date_local": dt.datetime.fromtimestamp(ts, ZoneInfo(tz)).isoformat(),
-                    "body_c": val,
-                })
+                body_val = v * (10 ** u)
+
+        if isinstance(ts, (int, float)) and isinstance(body_val, (int, float)):
+            # collect item for response
+            items.append({
+                "ts": ts,
+                "date_local": dt.datetime.fromtimestamp(ts, ZoneInfo(tz)).isoformat(),
+                "body_c": float(body_val),
+            })
+
+            # persist (best-effort)
+            try:
+                if user:
+                    from datetime import timezone
+                    measured_at_utc = dt.datetime.fromtimestamp(ts, tz=timezone.utc)
+                    _upsert_temperature_reading(
+                        db,
+                        user_id=user.id,
+                        provider="withings",
+                        measured_at_utc=measured_at_utc,
+                        body_c=float(body_val),
+                        skin_c=None,
+                        delta_c=None,
+                    )
+                    _update_snapshot_temperature(
+                        db,
+                        user_id=user.id,
+                        provider="withings",
+                        measured_at_utc=measured_at_utc,
+                        tz_str=tz_str,
+                        body_c=float(body_val),
+                        skin_c=None,
+                    )
+            except Exception:
+                pass
 
     # sort newest first
     items.sort(key=lambda x: x["ts"], reverse=True)
+
+    # commit once
+    try:
+        db.commit()
+    except Exception:
+        pass
 
     return {
         "start": start,
@@ -840,6 +1041,8 @@ def temperature(
         "items": items,
         "latest": items[0] if items else None
     }
+
+
 
 
 @router.get("/sleep")
@@ -872,7 +1075,6 @@ def sleep_summary(access_token: str,
     return {"date": date, "sleepHours": hours}
 
 
-
 @router.get("/ecg")
 def ecg_list(
     access_token: str,
@@ -880,12 +1082,13 @@ def ecg_list(
     end: Optional[str]   = Query(None, description="YYYY-MM-DD (default: today)"),
     tz: str              = Query("Europe/Rome", description="IANA timezone for window"),
     limit: int           = Query(25, ge=1, le=200, description="Max ECG items"),
+    db: Session = Depends(get_db),
+    app_user: User | None = Depends(get_current_user_optional),
 ):
     """
     List ECG recordings (newest first) within the [start,end] local-day window.
-    Returns minimal normalized fields + `latest` convenience.
+    Persists metadata and updates daily snapshot with the latest-of-day ECG.
     """
-    # Defaults: last 7 days in local tz
     try:
         z = ZoneInfo(tz)
     except Exception:
@@ -901,23 +1104,29 @@ def ecg_list(
     end_epoch   = int(datetime.combine(end_day,   time(23, 59, 59), tzinfo=z).timestamp())
 
     headers = _auth(access_token)
-    j = _post(HEART_V2_URL, headers, {
-        "action": "list",
-        "startdate": start_epoch,
-        "enddate": end_epoch,
-    })
+    j = _post(HEART_V2_URL, headers, {"action": "list", "startdate": start_epoch, "enddate": end_epoch})
     series = ((j or {}).get("body") or {}).get("series") or []
+
+    # Resolve user+tz once (best-effort)
+    try:
+        user, tz_str = _resolve_user_and_tz(db, access_token, app_user)
+    except Exception:
+        user = None
+        tz_str = tz
 
     items: List[Dict] = []
     for s in series:
-        # Robust field extraction across possible shapes
         signalid = s.get("signalid") or s.get("id")
         ts = s.get("timestamp") or s.get("startdate") or s.get("time")
         if not isinstance(ts, (int, float)):
             continue
         hr = s.get("heart_rate") or s.get("hr")
         afib = s.get("afib") or s.get("is_afib")
-        cls = s.get("classification") or s.get("algo_result")
+        cls = (s.get("classification") or s.get("algo_result"))
+        deviceid = s.get("deviceid")
+        model = s.get("model")
+        duration_s = s.get("duration") if isinstance(s.get("duration"), (int, float)) else None
+
         items.append({
             "signalid": signalid,
             "ts": int(ts),
@@ -925,14 +1134,54 @@ def ecg_list(
             "heart_rate": hr,
             "afib": afib,
             "classification": cls,
-            "deviceid": s.get("deviceid"),
-            "model": s.get("model"),
+            "deviceid": deviceid,
+            "model": model,
         })
+
+        # Persist (best-effort)
+        try:
+            if user:
+                from datetime import timezone
+                start_at_utc = datetime.fromtimestamp(int(ts), tz=timezone.utc)
+                # Withings list doesn’t always include an end; if absent, use start as end
+                end_at_utc = start_at_utc
+                _upsert_ecg_record(
+                    db,
+                    user_id=user.id,
+                    provider="withings",
+                    record_id=str(signalid) if signalid is not None else None,
+                    start_at_utc=start_at_utc,
+                    end_at_utc=end_at_utc,
+                    hr_bpm=float(hr) if isinstance(hr, (int, float)) else None,
+                    classification=str(cls) if cls is not None else None,
+                    duration_s=int(duration_s) if isinstance(duration_s, (int, float)) else None,
+                    file_ref=None,
+                )
+        except Exception:
+            pass
 
     # Newest first + limit
     items.sort(key=lambda x: x["ts"], reverse=True)
     if len(items) > limit:
         items = items[:limit]
+
+    # Update daily snapshot using the newest ECG in the response window
+    try:
+        if user and items:
+            latest = items[0]
+            from datetime import timezone
+            latest_dt = datetime.fromtimestamp(latest["ts"], tz=timezone.utc)
+            _update_snapshot_ecg(
+                db,
+                user_id=user.id,
+                provider="withings",
+                measured_at_utc=latest_dt,
+                tz_str=tz_str,
+                hr_bpm=float(latest["heart_rate"]) if isinstance(latest.get("heart_rate"), (int, float)) else None,
+            )
+        db.commit()
+    except Exception:
+        pass
 
     return {
         "start": start or start_day.isoformat(),
@@ -942,6 +1191,7 @@ def ecg_list(
         "latest": (items[0] if items else None),
         "items": items,
     }
+
 
 
 @router.get("/hrv")
@@ -1031,4 +1281,3 @@ def hrv_nightly(
         "items": items,
         "latest": (items[-1] if items else None)
     }
-
