@@ -1,8 +1,8 @@
+// AuthCallback.tsx
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { tokens } from "@/lib/storage";
-import { exchangeCode } from "@/lib/api"; // Fitbit: GET /fitbit/callback?code&state
-import { exchangeWithingsCode } from "@/lib/api"; // We'll add this in api.ts (Step 3)
+import { exchangeFitbitCode, exchangeWithingsCode } from "@/lib/api"; // ✅ use POST /fitbit/exchange now
 
 type Provider = "fitbit" | "withings";
 
@@ -11,17 +11,9 @@ export default function AuthCallback() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    // Remove trailing hash some providers append
-    if (window.location.hash && window.location.hash !== "#") {
-      history.replaceState(
-        null,
-        "",
-        window.location.pathname + window.location.search
-      );
-    }
-
     (async () => {
       try {
+        // 1) Read params
         const url = new URL(window.location.href);
         const code = url.searchParams.get("code");
         const state = url.searchParams.get("state");
@@ -30,15 +22,13 @@ export default function AuthCallback() {
         if (!code) throw new Error("Missing authorization code.");
         if (!state) throw new Error("Missing state parameter.");
 
-        let data: any;
-        if (provider === "withings") {
-          // Withings: SPA exchanges code via /withings/exchange
-          data = await exchangeWithingsCode(code, state);
-        } else {
-          // Fitbit: backend GET /fitbit/callback does the exchange
-          data = await exchangeCode(code, state);
-        }
+        // 2) Exchange on backend
+        const data =
+          provider === "withings"
+            ? await exchangeWithingsCode(code, state)
+            : await exchangeFitbitCode(code, state);
 
+        // 3) Extract tokens (backend may nest under .tokens)
         const access = data?.tokens?.access_token ?? data?.access_token;
         const refresh = data?.tokens?.refresh_token ?? data?.refresh_token;
         const userId =
@@ -49,16 +39,19 @@ export default function AuthCallback() {
 
         if (!access) throw new Error("No access token returned from server.");
 
+        // 4) Persist client-side session (short-lived access; refresh optional)
         tokens.setActiveProvider(provider);
         tokens.setAccess(provider, access);
         if (refresh) tokens.setRefresh(provider, refresh);
         if (userId) tokens.setUserId(provider, String(userId));
 
+        // 5) Clean the URL (remove code/state) to avoid leaking in history
+        const clean = new URL(window.location.href);
+        clean.searchParams.delete("code");
+        clean.searchParams.delete("state");
+        window.history.replaceState(null, "", clean.pathname);
+
         setMsg("Connected! Redirecting to your dashboard…");
-        // setTimeout(() => {
-        //   // hard replace so context re-reads storage immediately
-        //   window.location.replace("/dashboard");
-        // }, 150);
         navigate("/dashboard", { replace: true });
       } catch (err: any) {
         console.error("[AuthCallback] error:", err);

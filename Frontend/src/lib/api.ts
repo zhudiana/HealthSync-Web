@@ -11,13 +11,54 @@ export async function getFitbitAuthUrl(scope: string) {
   return res.json() as Promise<{ authorization_url: string; state: string }>;
 }
 
-export async function exchangeCode(code: string, state: string) {
-  const url = `${API_BASE_URL}/fitbit/callback?code=${encodeURIComponent(
-    code
-  )}&state=${encodeURIComponent(state)}`;
-  const res = await fetch(url);
+// export async function exchangeCode(code: string, state: string) {
+//   const url = `${API_BASE_URL}/fitbit/callback?code=${encodeURIComponent(
+//     code
+//   )}&state=${encodeURIComponent(state)}`;
+//   const res = await fetch(url);
+//   const data = await res.json();
+//   if (!res.ok) throw new Error(data?.detail || "callback failed");
+//   return data;
+// }
+
+// export async function exchangeFitbitCode(code: string, state: string) {
+//   const res = await fetch(`${API_BASE_URL}/fitbit/exchange`, {
+//     method: "POST",
+//     headers: { "Content-Type": "application/json" },
+//     body: JSON.stringify({ code, state }),
+//   });
+//   const data = await res.json();
+//   if (!res.ok) throw new Error(data?.detail || "exchange failed");
+//   return data as {
+//     message: string;
+//     account_id: string;
+//     fitbit_user_id: string;
+//     app_user: {
+//       id: string;
+//       auth_user_id: string;
+//       display_name?: string | null;
+//     };
+//     expires_at?: string | null;
+//     scope?: string | null;
+//     tokens: {
+//       access_token: string;
+//       refresh_token: string;
+//       expires_in: number;
+//       scope: string;
+//       token_type: string;
+//       user_id: string;
+//     };
+//   };
+// }
+
+export async function exchangeFitbitCode(code: string, state: string) {
+  const res = await fetch(`${API_BASE_URL}/fitbit/exchange`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code, state }),
+  });
   const data = await res.json();
-  if (!res.ok) throw new Error(data?.detail || "callback failed");
+  if (!res.ok) throw new Error(data?.detail || "exchange failed");
   return data;
 }
 
