@@ -272,7 +272,8 @@ export const metrics = {
 // ---------- Withings ----------
 export async function getWithingsAuthUrl(scope: string) {
   const res = await fetch(
-    `${API_BASE_URL}/withings/login?scope=${encodeURIComponent(scope)}`
+    `${API_BASE_URL}/withings/login?scope=${encodeURIComponent(scope)}`,
+    { credentials: "include" }
   );
   if (!res.ok) throw new Error("Failed to get Withings auth URL");
   return res.json();
@@ -283,6 +284,7 @@ export async function exchangeWithingsCode(code: string, state: string) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ code, state }),
+    credentials: "include",
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data?.detail || "withings exchange failed");
@@ -291,7 +293,8 @@ export async function exchangeWithingsCode(code: string, state: string) {
 
 export async function getUserByAuth(authUserId: string) {
   const r = await fetch(
-    `${API_BASE_URL}/users/by-auth/${encodeURIComponent(authUserId)}`
+    `${API_BASE_URL}/users/by-auth/${encodeURIComponent(authUserId)}`,
+    { credentials: "include" }
   );
   const d = await r.json();
   if (!r.ok) throw new Error(d?.detail || "Failed to load user");
@@ -313,6 +316,7 @@ export async function updateUserByAuth(
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
+      credentials: "include",
     }
   );
   const d = await r.json();
@@ -328,7 +332,7 @@ export async function updateUserByAuth(
 export async function withingsMetricsOverview(accessToken: string) {
   const url = new URL(`${API_BASE_URL}/withings/metrics/overview`);
   url.searchParams.set("access_token", accessToken);
-  const res = await fetch(url.toString());
+  const res = await fetch(url.toString(), { credentials: "include" });
   const data = await res.json();
   if (!res.ok) throw new Error(data?.detail || "withings metrics failed");
   // { weightKg: number|null, restingHeartRate: number|null }
@@ -338,7 +342,7 @@ export async function withingsMetricsOverview(accessToken: string) {
 export async function withingsWeightLatest(accessToken: string) {
   const u = new URL(`${API_BASE_URL}/withings/metrics/weight/latest`);
   u.searchParams.set("access_token", accessToken);
-  const r = await fetch(u.toString());
+  const r = await fetch(u.toString(), { credentials: "include" });
   const d = await r.json();
   if (!r.ok) throw new Error(d?.detail || "withings weight latest failed");
   // d = { value: number|null, latest_date: "YYYY-MM-DD"|null }
@@ -374,7 +378,7 @@ export async function withingsHeartRate(
     u.searchParams.set("start", start); // NEW
     u.searchParams.set("end", end); // NEW
   } // NEW
-  const r = await fetch(u.toString()); // NEW
+  const r = await fetch(u.toString(), { credentials: "include" }); // NEW
   const d = await r.json(); // NEW
   if (!r.ok) throw new Error(d?.detail || "withings heart-rate failed"); // NEW
   return d as {
@@ -390,7 +394,7 @@ export async function withingsHeartRateDaily(
   const u = new URL(`${API_BASE_URL}/withings/metrics/heart-rate/daily`);
   u.searchParams.set("access_token", accessToken);
   if (date) u.searchParams.set("date", date);
-  const r = await fetch(u.toString());
+  const r = await fetch(u.toString(), { credentials: "include" });
   const d = await r.json();
   if (!r.ok) throw new Error(d?.detail || "withings hr daily failed");
   return d as {
@@ -414,7 +418,7 @@ export async function withingsSpO2(
     u.searchParams.set("start", start); // NEW
     u.searchParams.set("end", end); // NEW
   } // NEW
-  const r = await fetch(u.toString()); // NEW
+  const r = await fetch(u.toString(), { credentials: "include" }); // NEW
   const d = await r.json(); // NEW
   if (!r.ok) throw new Error(d?.detail || "withings spo2 failed"); // NEW
   return d as {
@@ -458,7 +462,7 @@ export async function withingsECG(
   u.searchParams.set("tz", tz);
   u.searchParams.set("limit", String(limit));
 
-  const r = await fetch(u.toString());
+  const r = await fetch(u.toString(), { credentials: "include" });
   const d = await r.json();
   if (!r.ok) throw new Error(d?.detail || "withings ECG failed");
   return d as {

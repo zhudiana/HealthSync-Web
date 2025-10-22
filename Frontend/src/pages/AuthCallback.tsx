@@ -1,10 +1,15 @@
-// AuthCallback.tsx
+// AuthCallback.tsx (drop-in replacement)
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { tokens } from "@/lib/storage";
-import { exchangeFitbitCode, exchangeWithingsCode } from "@/lib/api"; // ✅ use POST /fitbit/exchange now
+import { exchangeWithingsCode } from "@/lib/api";
+// optional: import getMe if you add /auth/me on backend
+// import { getMe } from "@/lib/api";
 
-type Provider = "fitbit" | "withings";
+declare global {
+  interface Window {
+    __hs_exchange_done?: boolean;
+  }
+}
 
 export default function AuthCallback() {
   const [msg, setMsg] = useState("Finishing sign-in…");
@@ -12,44 +17,28 @@ export default function AuthCallback() {
 
   useEffect(() => {
     (async () => {
+      // prevent double POST if React re-mounts
+      if (window.__hs_exchange_done) return;
+      window.__hs_exchange_done = true;
+
       try {
-        // 1) Read params
         const url = new URL(window.location.href);
         const code = url.searchParams.get("code");
         const state = url.searchParams.get("state");
-        const provider = (tokens.getActiveProvider() as Provider) || "fitbit";
-
         if (!code) throw new Error("Missing authorization code.");
         if (!state) throw new Error("Missing state parameter.");
 
-        // 2) Exchange on backend
-        const data =
-          provider === "withings"
-            ? await exchangeWithingsCode(code, state)
-            : await exchangeFitbitCode(code, state);
+        // Backend sets HttpOnly cookies; body is just { ok: true }
+        await exchangeWithingsCode(code, state);
 
-        // 3) Extract tokens (backend may nest under .tokens)
-        const access = data?.tokens?.access_token ?? data?.access_token;
-        const refresh = data?.tokens?.refresh_token ?? data?.refresh_token;
-        const userId =
-          data?.tokens?.user_id ??
-          data?.user_id ??
-          data?.tokens?.userid ??
-          data?.userid;
-
-        if (!access) throw new Error("No access token returned from server.");
-
-        // 4) Persist client-side session (short-lived access; refresh optional)
-        tokens.setActiveProvider(provider);
-        tokens.setAccess(provider, access);
-        if (refresh) tokens.setRefresh(provider, refresh);
-        if (userId) tokens.setUserId(provider, String(userId));
-
-        // 5) Clean the URL (remove code/state) to avoid leaking in history
+        // Clean query so refresh doesn't replay
         const clean = new URL(window.location.href);
         clean.searchParams.delete("code");
         clean.searchParams.delete("state");
-        window.history.replaceState(null, "", clean.pathname);
+        window.history.replaceState({}, "", clean.pathname);
+
+        // Optional: verify cookie/session
+        // const me = await getMe(); console.log("Signed in as", me);
 
         setMsg("Connected! Redirecting to your dashboard…");
         navigate("/dashboard", { replace: true });
