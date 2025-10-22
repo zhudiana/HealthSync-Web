@@ -24,6 +24,8 @@ from app.db.crud.metrics import (
     _upsert_temperature_reading, 
     _upsert_weight_reading
     )
+import logging
+logger = logging.getLogger("uvicorn.error")  # integrates with Uvicorn
 
 
 router = APIRouter(tags=["Withings Metrics"], prefix="/withings/metrics")
@@ -406,8 +408,8 @@ def daily_metrics(
                 # best-effort persist (fallback day)
                 try:
                     _persist_daily_snapshot(db, access_token, app_user, r2)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.exception("persist_daily_snapshot failed: %s", e)
                 return r2
 
     # Prevent browser/CDN caching
@@ -416,8 +418,8 @@ def daily_metrics(
     # Persist the requested day (best-effort)
     try:
         _persist_daily_snapshot(db, access_token, app_user, result)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.exception("persist_daily_snapshot failed: %s", e)
 
     return result
 
