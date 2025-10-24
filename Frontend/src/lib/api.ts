@@ -1,4 +1,8 @@
-const API_BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+// const API_BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+const API_BASE_URL = import.meta.env.VITE_API_URL as string;
+if (!API_BASE_URL) {
+  throw new Error("Missing VITE_API_URL. Set it in Vercel env and redeploy.");
+}
 
 type Provider = "fitbit" | "withings";
 
@@ -10,46 +14,6 @@ export async function getFitbitAuthUrl(scope: string) {
   if (!res.ok) throw new Error(`login failed: ${res.status}`);
   return res.json() as Promise<{ authorization_url: string; state: string }>;
 }
-
-// export async function exchangeCode(code: string, state: string) {
-//   const url = `${API_BASE_URL}/fitbit/callback?code=${encodeURIComponent(
-//     code
-//   )}&state=${encodeURIComponent(state)}`;
-//   const res = await fetch(url);
-//   const data = await res.json();
-//   if (!res.ok) throw new Error(data?.detail || "callback failed");
-//   return data;
-// }
-
-// export async function exchangeFitbitCode(code: string, state: string) {
-//   const res = await fetch(`${API_BASE_URL}/fitbit/exchange`, {
-//     method: "POST",
-//     headers: { "Content-Type": "application/json" },
-//     body: JSON.stringify({ code, state }),
-//   });
-//   const data = await res.json();
-//   if (!res.ok) throw new Error(data?.detail || "exchange failed");
-//   return data as {
-//     message: string;
-//     account_id: string;
-//     fitbit_user_id: string;
-//     app_user: {
-//       id: string;
-//       auth_user_id: string;
-//       display_name?: string | null;
-//     };
-//     expires_at?: string | null;
-//     scope?: string | null;
-//     tokens: {
-//       access_token: string;
-//       refresh_token: string;
-//       expires_in: number;
-//       scope: string;
-//       token_type: string;
-//       user_id: string;
-//     };
-//   };
-// }
 
 export async function exchangeFitbitCode(code: string, state: string) {
   const res = await fetch(`${API_BASE_URL}/fitbit/exchange`, {
@@ -374,10 +338,9 @@ export async function withingsHeartRate(
   const u = new URL(`${API_BASE_URL}/withings/metrics/heart-rate`); // NEW
   u.searchParams.set("access_token", accessToken); // NEW
   if (start && end) {
-    // NEW
     u.searchParams.set("start", start); // NEW
     u.searchParams.set("end", end); // NEW
-  } // NEW
+  }
   const r = await fetch(u.toString(), { credentials: "include" }); // NEW
   const d = await r.json(); // NEW
   if (!r.ok) throw new Error(d?.detail || "withings heart-rate failed"); // NEW

@@ -37,9 +37,6 @@ export default function AuthCallback() {
         clean.searchParams.delete("state");
         window.history.replaceState({}, "", clean.pathname);
 
-        // Optional: verify cookie/session
-        // const me = await getMe(); console.log("Signed in as", me);
-
         setMsg("Connected! Redirecting to your dashboard…");
         navigate("/dashboard", { replace: true });
       } catch (err: any) {
