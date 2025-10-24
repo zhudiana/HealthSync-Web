@@ -69,39 +69,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }
 
-  // async function loadProfile() {
-  //   if (!provider) return;
-
-  //   const access = await getAccessToken();
-  //   if (!access) {
-  //     setAuth(false);
-  //     setProfile(null);
-  //     return;
-  //   }
-
-  //   try {
-  //     const data = await fetchProfile(access, provider);
-  //     setProfile(data?.user ?? null);
-  //     setAuth(true);
-  //   } catch {
-  //     // If 401, try refresh once
-  //     const refreshed = await getAccessToken();
-  //     if (!refreshed) {
-  //       setAuth(false);
-  //       setProfile(null);
-  //     } else {
-  //       try {
-  //         const data2 = await fetchProfile(refreshed, provider);
-  //         setProfile(data2?.user ?? null);
-  //         setAuth(true);
-  //       } catch {
-  //         setAuth(false);
-  //         setProfile(null);
-  //       }
-  //     }
-  //   }
-  // }
-
   async function loadProfile() {
     if (!provider) return;
 
@@ -112,7 +79,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    // ✅ FITBIT: keep behavior the same
     if (provider === "fitbit") {
       try {
         const data = await fetchProfile(access, "fitbit");
@@ -139,7 +105,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
-    // ✅ WITHINGS: be tolerant — don't log out if profile fetch fails
     if (provider === "withings") {
       try {
         const data = await fetchProfile(access, "withings"); // hits /withings/profile

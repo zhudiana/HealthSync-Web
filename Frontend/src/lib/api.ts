@@ -1,8 +1,5 @@
 // const API_BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
-const API_BASE_URL = import.meta.env.VITE_API_URL as string;
-if (!API_BASE_URL) {
-  throw new Error("Missing VITE_API_URL. Set it in Vercel env and redeploy.");
-}
+const API_BASE_URL = import.meta.env.VITE_API_URL;
 
 type Provider = "fitbit" | "withings";
 
