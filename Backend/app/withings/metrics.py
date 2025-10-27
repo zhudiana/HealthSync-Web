@@ -4,8 +4,9 @@ from typing import Optional, List, Dict, Tuple
 from datetime import datetime, timedelta,time, date as _date
 from zoneinfo import ZoneInfo
 from sqlalchemy.orm import Session
-from app.dependencies import get_db, get_current_user_optional
+from app.dependencies import get_db
 from app.db.models import WithingsAccount, User
+from app.utils.crypto import decrypt_text  
 import json
 from app.db.crud.metrics import (
     _bulk_upsert_distance_intraday, 
@@ -60,43 +61,38 @@ def _user_tz(headers) -> ZoneInfo:
 
 
 
-def _resolve_user_and_tz(
-    db: Session,
-    access_token: str,
-    app_user: User | None = None,
-) -> tuple[User, str]:
+
+
+
+def _resolve_user_and_tz(db: Session, access_token: str) -> tuple[User, str]:
     """
-    Prefer the authenticated app user (if provided via get_current_user).
-    Fallback: derive Withings userid from the access token, then map to our
-    WithingsAccount -> User. Returns (user, tz_string).
+    Resolve app user + tz from access token by looking up in WithingsAccount table.
+    Works even when access_token is stored encrypted.
     """
-    if app_user:
-        acc = db.query(WithingsAccount).filter(WithingsAccount.user_id == app_user.id).first()
-        tz = (acc.timezone if acc else None) or "UTC"
-        return app_user, tz
+    # 1) scan accounts and compare decrypted token
+    acc = None
+    # only pull columns we need for speed
+    rows = db.query(
+        WithingsAccount.id,
+        WithingsAccount.user_id,
+        WithingsAccount.timezone,
+        WithingsAccount.access_token,
+    ).all()
 
-    # Fallback: call Withings to get the user's withings_user_id
-    headers = {"Authorization": f"Bearer {access_token}"}
-    r = requests.post(
-        "https://wbsapi.withings.net/v2/user",
-        headers=headers,
-        data={"action": "getuserslist"},
-        timeout=15,
-    )
-    wid = None
-    if r.status_code == 200:
-        j = r.json() or {}
-        if j.get("status") == 0:
-            users = (j.get("body") or {}).get("users") or []
-            if users:
-                wid = str(users[0].get("id"))
+    for row in rows:
+        try:
+            if row.access_token:
+                plain = decrypt_text(row.access_token)
+                if plain == access_token:
+                    # re-load full model only when matched
+                    acc = db.query(WithingsAccount).filter(WithingsAccount.id == row.id).first()
+                    break
+        except Exception:
+            # ignore decrypt errors and keep searching
+            continue
 
-    if not wid:
-        raise HTTPException(status_code=401, detail="Cannot resolve Withings user from access token")
-
-    acc = db.query(WithingsAccount).filter(WithingsAccount.withings_user_id == wid).first()
     if not acc:
-        raise HTTPException(status_code=404, detail="Linked Withings account not found")
+        raise HTTPException(status_code=404, detail="Withings account not found for this access token")
 
     user = db.query(User).filter(User.id == acc.user_id).first()
     if not user:
@@ -105,54 +101,61 @@ def _resolve_user_and_tz(
     return user, (acc.timezone or "UTC")
 
 
-
-def _persist_daily_snapshot(db: Session, access_token: str, app_user: User | None, payload: dict):
+def _persist_daily_snapshot(db: Session, access_token: str, payload: dict):
     """
     Writes daily rows into StepsDaily, DistanceDaily, and a denormalized DailySnapshot
     for the given date. (Best-effort; caller ignores failures.)
     payload keys expected: date (YYYY-MM-DD), steps, distanceKm, sleepHours, calories
     """
-    user, tz = _resolve_user_and_tz(db, access_token, app_user)
-    day_local = datetime.fromisoformat(payload["date"]).date()
+    try:
+        user, tz = _resolve_user_and_tz(db, access_token)
+    except Exception as e:
+        logger.warning(f"Could not resolve user for persistence: {e}")
+        return
+    
+    try:
+        day_local = datetime.fromisoformat(payload["date"]).date()
 
-    steps = payload.get("steps")
-    distance_km = payload.get("distanceKm")
-    sleep_hours = payload.get("sleepHours")
-    calories = payload.get("calories")
+        steps = payload.get("steps")
+        distance_km = payload.get("distanceKm")
+        sleep_hours = payload.get("sleepHours")
+        calories = payload.get("calories")
 
-    # Upsert to specific metric tables
-    _upsert_steps_daily(
-        db,
-        user_id=user.id,
-        provider="withings",
-        date_local=day_local,
-        steps=int(steps) if isinstance(steps, (int, float)) else None,
-        calories=float(calories) if isinstance(calories, (int, float)) else None,
-    )
-    if isinstance(distance_km, (int, float)):
-        _upsert_distance_daily(
+        # Upsert to specific metric tables
+        _upsert_steps_daily(
             db,
             user_id=user.id,
             provider="withings",
             date_local=day_local,
-            distance_km=float(distance_km),
+            steps=int(steps) if isinstance(steps, (int, float)) else None,
+            calories=float(calories) if isinstance(calories, (int, float)) else None,
+        )
+        if isinstance(distance_km, (int, float)):
+            _upsert_distance_daily(
+                db,
+                user_id=user.id,
+                provider="withings",
+                date_local=day_local,
+                distance_km=float(distance_km),
+            )
+
+        # Upsert snapshot (for fast dashboard read)
+        _upsert_daily_snapshot(
+            db,
+            user_id=user.id,
+            provider="withings",
+            date_local=day_local,
+            steps=int(steps) if isinstance(steps, (int, float)) else None,
+            distance_km=float(distance_km) if isinstance(distance_km, (int, float)) else None,
+            calories=float(calories) if isinstance(calories, (int, float)) else None,
+            sleep_hours=float(sleep_hours) if isinstance(sleep_hours, (int, float)) else None,
+            tz=tz,
         )
 
-    # Upsert snapshot (for fast dashboard read)
-    _upsert_daily_snapshot(
-        db,
-        user_id=user.id,
-        provider="withings",
-        date_local=day_local,
-        steps=int(steps) if isinstance(steps, (int, float)) else None,
-        distance_km=float(distance_km) if isinstance(distance_km, (int, float)) else None,
-        calories=float(calories) if isinstance(calories, (int, float)) else None,
-        sleep_hours=float(sleep_hours) if isinstance(sleep_hours, (int, float)) else None,
-        tz=tz,
-    )
-
-    db.commit()
-
+        db.commit()
+    except Exception as e:
+        logger.warning(f"Failed to persist daily snapshot: {e}")
+        db.rollback()
 
 
 @router.get("/daily")
@@ -163,7 +166,7 @@ def daily_metrics(
     fallback_days: int = Query(3, ge=0, le=14, description="Look back if empty"),
     debug: int = Query(0, description="Set 1 to include raw payloads"),
     db: Session = Depends(get_db),
-    app_user: User | None = Depends(get_current_user_optional),
+    # app_user: User | None = Depends(get_current_user_optional),
 ):
     """
     Withings daily snapshot:
@@ -351,7 +354,7 @@ def daily_metrics(
             dist_samples  = _collect_metric_samples(series, "distance")
 
             try:
-                user, _tz = _resolve_user_and_tz(db, access_token, app_user)
+                user, _tz = _resolve_user_and_tz(db, access_token)
                 rows_steps = [{
                     "user_id": user.id,
                     "provider": "withings",
@@ -407,7 +410,7 @@ def daily_metrics(
                 response.headers["Cache-Control"] = "no-store"
                 # best-effort persist (fallback day)
                 try:
-                    _persist_daily_snapshot(db, access_token, app_user, r2)
+                    _persist_daily_snapshot(db, access_token, r2)
                 except Exception as e:
                     logger.exception("persist_daily_snapshot failed: %s", e)
                 return r2
@@ -417,7 +420,7 @@ def daily_metrics(
 
     # Persist the requested day (best-effort)
     try:
-        _persist_daily_snapshot(db, access_token, app_user, result)
+        _persist_daily_snapshot(db, access_token, result)
     except Exception as e:
         logger.exception("persist_daily_snapshot failed: %s", e)
 
@@ -455,7 +458,8 @@ def overview(access_token: str):
 @router.get("/weight/latest")
 def weight_latest(access_token: str, lookback_days: int = Query(90, ge=1, le=365),
                   db: Session = Depends(get_db),
-                  app_user: User | None = Depends(get_current_user_optional)):
+                #   app_user: User | None = Depends(get_current_user_optional)
+                  ):
     """
     Latest weight (kg) within lookback window. Also persists the reading + updates snapshot.
     """
@@ -485,7 +489,7 @@ def weight_latest(access_token: str, lookback_days: int = Query(90, ge=1, le=365
 
     # Persist (best-effort)
     try:
-        user, tz_str = _resolve_user_and_tz(db, access_token, app_user)
+        user, tz_str = _resolve_user_and_tz(db, access_token)
         from datetime import timezone
         measured_at_utc = datetime.fromtimestamp(latest[1], tz=timezone.utc)
 
@@ -532,7 +536,7 @@ def weight_history(
     start: str = Query(..., description="YYYY-MM-DD"),
     end: str   = Query(..., description="YYYY-MM-DD"),
     db: Session = Depends(get_db),
-    app_user: User | None = Depends(get_current_user_optional),
+    # app_user: User | None = Depends(get_current_user_optional),
 ):
     headers = _auth(access_token)
     j = _post(MEASURE_URL, headers, {
@@ -546,7 +550,7 @@ def weight_history(
     groups = (j.get("body") or {}).get("measuregrps", [])
     # Resolve user + tz once
     try:
-        user, tz_str = _resolve_user_and_tz(db, access_token, app_user)
+        user, tz_str = _resolve_user_and_tz(db, access_token)
     except Exception:
         user = None
         tz_str = None
@@ -608,7 +612,7 @@ def heart_rate_daily(
     access_token: str,
     date: Optional[str] = Query(None, description="YYYY-MM-DD (defaults to today)"),
     db: Session = Depends(get_db),
-    app_user: User | None = Depends(get_current_user_optional),
+    # app_user: User | None = Depends(get_current_user_optional),
 ):
     """
     Daily heart-rate roll-up from Withings (avg/min/max) for the given local day.
@@ -638,7 +642,7 @@ def heart_rate_daily(
 
     # Persist (best-effort)
     try:
-        user, _tz = _resolve_user_and_tz(db, access_token, app_user)
+        user, _tz = _resolve_user_and_tz(db, access_token)
         date_local = datetime.fromisoformat(date).date()
 
         _upsert_hr_daily(
@@ -875,7 +879,7 @@ def spo2(
     start: Optional[str] = Query(None, description="YYYY-MM-DD"),
     end: Optional[str] = Query(None, description="YYYY-MM-DD"),
     db: Session = Depends(get_db),
-    app_user: User | None = Depends(get_current_user_optional),
+    # app_user: User | None = Depends(get_current_user_optional),
 ):
     """
     Latest or range of SpO₂ (%). Persists each reading and updates the daily snapshot.
@@ -893,7 +897,7 @@ def spo2(
 
     # Resolve user + tz once (best-effort)
     try:
-        user, tz_str = _resolve_user_and_tz(db, access_token, app_user)
+        user, tz_str = _resolve_user_and_tz(db, access_token)
     except Exception:
         user = None
         tz_str = None
@@ -954,7 +958,7 @@ def temperature(
     end: str   = Query(..., description="YYYY-MM-DD"),
     tz: str    = Query("UTC", description="IANA tz like Europe/Rome"),
     db: Session = Depends(get_db),
-    app_user: User | None = Depends(get_current_user_optional),
+    # app_user: User | None = Depends(get_current_user_optional),
 ):
     """
     Manual body temperature (attrib=2), °C.
@@ -975,7 +979,7 @@ def temperature(
     items = []
     # Resolve user + tz (best-effort)
     try:
-        user, tz_str = _resolve_user_and_tz(db, access_token, app_user)
+        user, tz_str = _resolve_user_and_tz(db, access_token)
     except Exception:
         user = None
         tz_str = tz
@@ -1083,7 +1087,7 @@ def ecg_list(
     tz: str              = Query("Europe/Rome", description="IANA timezone for window"),
     limit: int           = Query(25, ge=1, le=200, description="Max ECG items"),
     db: Session = Depends(get_db),
-    app_user: User | None = Depends(get_current_user_optional),
+    # app_user: User | None = Depends(get_current_user_optional),
 ):
     """
     List ECG recordings (newest first) within the [start,end] local-day window.
@@ -1109,7 +1113,7 @@ def ecg_list(
 
     # Resolve user+tz once (best-effort)
     try:
-        user, tz_str = _resolve_user_and_tz(db, access_token, app_user)
+        user, tz_str = _resolve_user_and_tz(db, access_token)
     except Exception:
         user = None
         tz_str = tz
@@ -1281,7 +1285,6 @@ def hrv_nightly(
         "items": items,
         "latest": (items[-1] if items else None)
     }
-
 
 
 

@@ -27,6 +27,9 @@ def upsert_fitbit_account(
         if hasattr(payload, field):
             setattr(acc, field, getattr(payload, field))
 
+    if getattr(payload, "access_token", None):
+        acc.access_token = payload.access_token
+
     # refresh token if present
     if getattr(payload, "refresh_token", None):
         acc.refresh_token = payload.refresh_token

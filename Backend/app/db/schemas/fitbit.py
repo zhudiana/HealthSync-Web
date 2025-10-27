@@ -11,10 +11,12 @@ class FitbitAccountBase(BaseModel):
     expires_at: datetime | None = None
 
 class FitbitAccountCreate(FitbitAccountBase):
+    access_token: str
     refresh_token: str
 
 class FitbitAccountUpdate(BaseModel):
     # allow partial updates on rotation/expiry
+    access_token: str | None = None
     refresh_token: str | None = None
     scope: str | None = None
     token_type: str | None = None

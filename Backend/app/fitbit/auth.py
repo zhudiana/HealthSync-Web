@@ -58,52 +58,7 @@ def generate_pkce_values() -> PKCEValues:
     )
 
 
-# @router.get("/login")
-# def login_fitbit():
-#     """
-#     Step 1 & 2: Generate PKCE values and redirect user to Fitbit authorization page
-#     """
-#     FITBIT_SCOPES = "activity heartrate sleep temperature oxygen_saturation weight profile settings"
 
-#     try:
-#         # Generate PKCE values
-#         pkce_values = generate_pkce_values()
-        
-#         # Store PKCE values and state in session
-#         oauth_sessions[pkce_values.state] = {
-#             "code_verifier": pkce_values.code_verifier,
-#             "code_challenge": pkce_values.code_challenge,
-#             "timestamp": secrets.token_hex(16)  # For session cleanup
-#         }
-        
-#         # Build authorization URL
-#         auth_params = {
-#             "client_id": FITBIT_CLIENT_ID,
-#             "response_type": "code",
-#             "code_challenge": pkce_values.code_challenge,
-#             "code_challenge_method": "S256",
-#             "scope": FITBIT_SCOPES,
-#             "state": pkce_values.state,
-#             "redirect_uri": FITBIT_REDIRECT_URI,
-#             "prompt": "consent",
-#             "include_granted_scopes": "true",
-#         }
-        
-#         auth_url = f"{FITBIT_AUTHORIZE_URL}?{urllib.parse.urlencode(auth_params)}"
-        
-#         return {
-#             "authorization_url": auth_url,
-#             "state": pkce_values.state,
-#             "redirect_uri": FITBIT_REDIRECT_URI,
-#             "requested_scopes": FITBIT_SCOPES,
-#             "message": "Visit the authorization_url to authorize the application"
-#         }
-        
-#     except Exception as e:
-#         raise HTTPException(
-#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-#             detail=f"Error generating authorization URL: {str(e)}"
-#         )
 
 @router.get("/login")
 def login_fitbit():
@@ -186,6 +141,7 @@ def fitbit_exchange(
         full_name=full_name,
         email=None,
         timezone=None,
+        access_token=access_token,
         refresh_token=refresh_token,
         scope=scope,
         token_type=token_type,
@@ -209,49 +165,7 @@ def fitbit_exchange(
     }
 
 
-# @router.get("/callback")
-# def fitbit_callback(code: str, state: str, error: Optional[str] = None):
-#     """
-#     Step 3 & 4: Handle the callback from Fitbit and exchange authorization code for tokens
-#     """
-#     try:
-#         # Check for authorization error
-#         if error:
-#             raise HTTPException(
-#                 status_code=status.HTTP_400_BAD_REQUEST,
-#                 detail=f"Authorization failed: {error}"
-#             )
-        
-#         # Validate state parameter (CSRF protection)
-#         if state not in oauth_sessions:
-#             raise HTTPException(
-#                 status_code=status.HTTP_400_BAD_REQUEST,
-#                 detail="Invalid or expired state parameter"
-#             )
-        
-#         session_data = oauth_sessions[state]
-#         code_verifier = session_data["code_verifier"]
-        
-#         # Exchange authorization code for tokens
-#         token_response = exchange_code_for_tokens(code, code_verifier)
-        
-#         # Clean up session data
-#         del oauth_sessions[state]
-        
-#         return {
-#             "message": "Authorization successful",
-#             "tokens": token_response,
-#             "user_id": token_response.get("user_id")
-#         }
-        
-#     except HTTPException:
-#         # Re-raise HTTP exceptions
-#         raise
-#     except Exception as e:
-#         raise HTTPException(
-#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-#             detail=f"Error processing callback: {str(e)}"
-#         )
+
 
 
 def exchange_code_for_tokens(auth_code: str, code_verifier: str) -> Dict[str, Any]:

@@ -274,7 +274,7 @@ def withings_exchange(
         full_name=full_name,
         email=None,
         timezone=None,
-        # access_token=access_token,
+        access_token=access_token,
         refresh_token=refresh_token,
         scope=scope,
         token_type=token_type,

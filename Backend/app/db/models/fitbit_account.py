@@ -20,6 +20,7 @@ class FitbitAccount(Base):
     email: Mapped[str | None] = mapped_column(String, nullable=True)
     timezone: Mapped[str | None] = mapped_column(String, nullable=True)
 
+    access_token: Mapped[str] = mapped_column(Text, nullable=False)
     refresh_token: Mapped[str] = mapped_column(Text, nullable=False)
     scope: Mapped[str | None] = mapped_column(Text, nullable=True)
     token_type: Mapped[str | None] = mapped_column(String, nullable=True)

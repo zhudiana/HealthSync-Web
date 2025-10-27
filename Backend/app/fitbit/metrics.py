@@ -1,7 +1,11 @@
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 import requests
+from sqlalchemy.orm import Session
+from app.dependencies import get_db
+from app.db.models.fitbit_account import FitbitAccount
+from app.db.models.user import User
 
 
 router = APIRouter(prefix="/fitbit/metrics", tags=["Fitbit Metrics"])
@@ -17,6 +21,25 @@ def _user_local_today(access_token: str) -> str:
     except Exception:
         tz = "UTC"
     return datetime.now(ZoneInfo(tz)).date().isoformat()
+
+
+def _resolve_user_and_tz(db: Session, access_token: str) -> tuple[User, str]:
+    """
+    Resolve app user + tz from FitbitAccount table using the raw access_token.
+    """
+    acc = (
+        db.query(FitbitAccount)
+        .filter(FitbitAccount.access_token == access_token)
+        .first()
+    )
+    if not acc:
+        raise HTTPException(status_code=404, detail="Fitbit account not found for this access token")
+
+    user = db.query(User).filter(User.id == acc.user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="App user not found")
+
+    return user, (acc.timezone or "UTC")
 
 
 @router.get("/summary")
@@ -492,3 +515,6 @@ def fitbit_intraday_heart_rate(
             "tz": tzname
         }
     }
+
+
+

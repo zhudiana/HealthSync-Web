@@ -31,6 +31,7 @@ class WithingsAccountCreate(BaseModel):
     full_name: str | None = None
     email: str | None = None  
     timezone: str | None = None
+    access_token: str
     refresh_token: str
     scope: str | None = None
     token_type: str | None = None
