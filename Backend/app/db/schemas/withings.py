@@ -13,12 +13,16 @@ class UserCreate(BaseModel):
 class UserUpdate(BaseModel):
     email: str | None = None
     display_name: str | None = None
+    hr_threshold_low: float | None = None
+    hr_threshold_high: float | None = None
 
 class UserRead(BaseModel):
     id: UUID
     auth_user_id: str
     email: str | None
     display_name: str | None
+    hr_threshold_low: float | None
+    hr_threshold_high: float | None
     created_at: datetime
     updated_at: datetime
     model_config = ConfigDict(from_attributes=True)

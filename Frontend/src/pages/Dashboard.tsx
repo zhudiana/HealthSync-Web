@@ -10,6 +10,7 @@ import {
   TrendingUp,
   RefreshCw,
 } from "lucide-react";
+import { Link } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import Header from "@/components/Header";
 import {
@@ -24,15 +25,8 @@ import {
   metrics as fitbitMetrics,
   withingsWeightLatest,
   withingsECG,
+  getUserByAuth,
 } from "@/lib/api";
-
-/*
-  HealthSync — Dark Dashboard (v2)
-  --------------------------------
-  This file keeps your previous data-loading logic intact,
-  but renders it in a richer dark UI similar to the video: sticky top, refresh,
-  animated stat cards, subtle badges, and clearer typography.
-*/
 
 // ---------- local stat card (no shadcn version) ----------
 function StatCard({
@@ -42,24 +36,40 @@ function StatCard({
   unit,
   foot,
   pulse,
+  to, // optional link target
 }: {
   title: string;
   icon: JSX.Element;
   value: string | number | null;
-  unit?: string;
-  foot?: string;
+  unit?: string | null;
+  foot?: string | null;
   pulse?: boolean;
+  to?: string;
 }) {
-  return (
-    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
-      <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 backdrop-blur-sm">
+  const CardInner = (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="group"
+    >
+      <div
+        className={[
+          "rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 backdrop-blur-sm",
+          to
+            ? "transition ring-0 outline-none focus-within:ring-2 focus-within:ring-emerald-400/60 hover:border-zinc-700 hover:bg-zinc-900/80 cursor-pointer"
+            : "",
+        ].join(" ")}
+      >
         <div className="flex items-center justify-between pb-2">
           <div className="flex items-center gap-2 text-zinc-300">
             {icon}
             <div className="text-sm font-medium text-zinc-300">{title}</div>
           </div>
           {pulse && (
-            <span className="inline-flex h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span
+              className="inline-flex h-2 w-2 rounded-full bg-emerald-400 animate-pulse"
+              aria-hidden="true"
+            />
           )}
         </div>
         <div className="pt-0">
@@ -67,18 +77,40 @@ function StatCard({
             <div>
               <div className="text-3xl font-semibold text-white">
                 {value ?? "—"}
-                {unit && (
+                {unit ? (
                   <span className="ml-2 text-base font-normal text-zinc-400">
                     {unit}
                   </span>
-                )}
+                ) : null}
               </div>
-              {foot && <div className="mt-1 text-xs text-zinc-400">{foot}</div>}
+              {foot ? (
+                <div className="mt-1 text-xs text-zinc-400">{foot}</div>
+              ) : null}
             </div>
+            {to && (
+              <span
+                className="text-xs text-zinc-500 opacity-0 group-hover:opacity-100 transition"
+                aria-hidden="true"
+              >
+                View details →
+              </span>
+            )}
           </div>
         </div>
       </div>
     </motion.div>
+  );
+
+  return to ? (
+    <Link
+      to={to}
+      aria-label={`View detailed ${title} analytics`}
+      className="block focus:outline-none"
+    >
+      {CardInner}
+    </Link>
+  ) : (
+    CardInner
   );
 }
 
@@ -105,6 +137,14 @@ export default function Dashboard() {
   const [minHR, setMinHR] = useState<number | null>(null);
   const [ecgHR, setEcgHR] = useState<number | null>(null);
   const [ecgTime, setEcgTime] = useState<string | null>(null);
+
+  const [dbDisplayName, setDbDisplayName] = useState<string | null>(null);
+
+  // Dates for labels
+  const [stepsDate, setStepsDate] = useState<string | null>(null);
+  const [distanceDate, setDistanceDate] = useState<string | null>(null);
+  const [caloriesDate, setCaloriesDate] = useState<string | null>(null);
+  const [heartRateDate, setHeartRateDate] = useState<string | null>(null);
 
   // ---------- helpers ----------
   const ymd = (d = new Date()) => d.toISOString().slice(0, 10);
@@ -141,7 +181,28 @@ export default function Dashboard() {
           minute: "2-digit",
         });
 
-  // ---------- initial load (kept from your previous code) ----------
+  // NEW: date label helpers
+  const isToday = (iso?: string | null) => {
+    if (!iso) return false;
+    const d = new Date(iso);
+    const t = new Date();
+    return (
+      d.getFullYear() === t.getFullYear() &&
+      d.getMonth() === t.getMonth() &&
+      d.getDate() === t.getDate()
+    );
+  };
+  const shortDay = (iso?: string | null) =>
+    !iso
+      ? null
+      : new Date(iso).toLocaleDateString(undefined, {
+          day: "2-digit",
+          month: "short",
+        });
+  const labelFor = (iso?: string | null, fallback: string = "—") =>
+    iso ? (isToday(iso) ? "today" : shortDay(iso)!) : fallback;
+
+  // ---------- initial load ----------
   useEffect(() => {
     let mounted = true;
     const ac = new AbortController();
@@ -154,6 +215,18 @@ export default function Dashboard() {
           return;
         }
 
+        // 1) Load display name from DB
+        const authId = localStorage.getItem("authUserId");
+        if (authId) {
+          try {
+            const u = await getUserByAuth(authId);
+            if (mounted) setDbDisplayName(u?.display_name ?? null);
+          } catch {
+            if (mounted) setDbDisplayName(null);
+          }
+        }
+
+        // 2) Get access token
         const access = await getAccessToken();
         if (!access) {
           if (!mounted) return;
@@ -161,7 +234,7 @@ export default function Dashboard() {
           return;
         }
 
-        // --- Load profile (provider-aware) ---
+        // 3) Provider profile
         try {
           const profResp = await fetchProfile(access, provider);
           const p = provider === "fitbit" ? profResp?.user : profResp;
@@ -181,18 +254,21 @@ export default function Dashboard() {
           }
         }
 
-        // --- Metrics ---
+        // 4) Metrics
         if (provider === "fitbit") {
           const ov = await metricsOverview(access);
           if (!mounted) return;
 
           setSteps(ov.steps ?? null);
-          setCalories(ov.calories?.total ?? ov.caloriesOut ?? null);
-          setRestingHR(ov.restingHeartRate ?? null);
-          setWeight(ov.weight ?? null);
-          setDistance(ov.total_km ?? null);
+          setStepsDate(ov.date ?? null);
 
-          // Sleep today; if empty, fallback to yesterday
+          setCalories(ov.calories?.total ?? ov.caloriesOut ?? null);
+          setCaloriesDate(ov.date ?? null);
+
+          setDistance(ov.total_km ?? null);
+          setDistanceDate(ov.date ?? null);
+
+          // Sleep today; fallback to yesterday
           let sleep = await fitbitMetrics.sleep(access);
           let totalHours = sleep?.hoursAsleep ?? null;
 
@@ -206,7 +282,7 @@ export default function Dashboard() {
           if (!mounted) return;
           setSleepHours(totalHours);
 
-          // HRV (daily RMSSD ms) – latest in a 2-day window
+          // HRV (latest in a 2-day window)
           try {
             const today = new Date();
             const start = ymd(
@@ -268,24 +344,47 @@ export default function Dashboard() {
         } else {
           // WITHINGS
           try {
-            const [w, d] = await Promise.all([
+            const todayStr = ymd();
+            const [w, d, latestW] = await Promise.all([
               withingsMetricsOverview(access),
-              withingsMetricsDaily(access),
+              withingsMetricsDaily(access, todayStr),
+              withingsWeightLatest(access),
             ]);
 
-            const latestW = await withingsWeightLatest(access);
             if (!mounted) return;
 
-            setWeight(latestW.value ?? w.weightKg ?? null);
+            // Set weight from latest measurement
+            setWeight(latestW.value ?? null);
             setRestingHR(w.restingHeartRate ?? null);
-            setSteps(d.steps ?? null);
-            setCalories(d.calories ?? null);
-            setSleepHours(d.sleepHours ?? null);
-            setDistance(d.distanceKm ?? null);
 
-            // ---- ECG ----
-            const todayStr = ymd();
-            withingsECG(access, todayStr, todayStr, "Europe/Rome", 1)
+            // Get today's metrics if available, otherwise use latest
+            setSteps(d.steps ?? null);
+            setStepsDate(d.date ?? null);
+
+            setCalories(d.calories ?? null);
+            setCaloriesDate(d.date ?? null);
+
+            setSleepHours(d.sleepHours ?? null);
+
+            setDistance(d.distanceKm ?? null);
+            setDistanceDate(d.date ?? null);
+
+            // Temperature (latest)
+            withingsTemperature(access, undefined, undefined)
+              .then((t) => {
+                if (!mounted) return;
+                if (t?.latest?.body_c) {
+                  setTempVar(t.latest.body_c);
+                } else {
+                  setTempVar(null);
+                }
+              })
+              .catch(() => {
+                if (mounted) setTempVar(null);
+              });
+
+            // ECG (latest) - fetch without date restriction
+            withingsECG(access, undefined, undefined, "Europe/Rome", 1)
               .then((e) => {
                 if (!mounted) return;
                 if (e?.latest) {
@@ -303,7 +402,7 @@ export default function Dashboard() {
                 }
               });
 
-            // ---- SpO₂ ----
+            // SpO2
             withingsSpO2(access)
               .then((s) => {
                 if (!mounted) return;
@@ -317,7 +416,7 @@ export default function Dashboard() {
                 }
               });
 
-            // ---- Temperature ----
+            // Temperature
             withingsTemperature(access, todayStr, todayStr)
               .then((t) => {
                 if (!mounted) return;
@@ -334,21 +433,24 @@ export default function Dashboard() {
                 }
               });
 
-            // ---- Heart Rate ----
+            // Heart rate daily (avg/min/max)
             try {
               let daily = await withingsHeartRateDaily(access, todayStr);
+              let dateUsed = todayStr;
               if (
                 daily?.hr_average == null &&
                 daily?.hr_max == null &&
                 daily?.hr_min == null
               ) {
-                daily = await withingsHeartRateDaily(access, ymdYesterday());
+                dateUsed = ymdYesterday();
+                daily = await withingsHeartRateDaily(access, dateUsed);
               }
               if (mounted) {
                 setAvgHR(daily?.hr_average ?? null);
                 setMaxHR(daily?.hr_max ?? null);
                 setMinHR(daily?.hr_min ?? null);
                 setHrUpdatedAt(daily?.updatedAt ?? null);
+                setHeartRateDate(dateUsed);
               }
             } catch {
               if (mounted) {
@@ -388,6 +490,7 @@ export default function Dashboard() {
 
   // ---------- render ----------
   const greetName =
+    dbDisplayName?.trim() ||
     profile?.displayName ||
     profile?.fullName?.trim() ||
     [profile?.firstName, profile?.lastName].filter(Boolean).join(" ") ||
@@ -417,27 +520,6 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
-      {/* Sticky top controls */}
-      <div className="sticky top-0 z-40 border-b border-zinc-800/80 bg-zinc-950/70 backdrop-blur supports-[backdrop-filter]:bg-zinc-950/50">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3">
-          <div className="flex items-center gap-3">
-            <Watch className="h-5 w-5" />
-            <span className="text-lg font-semibold">HealthSync</span>
-            <span className="rounded-md border border-zinc-700 bg-zinc-800 px-2 py-0.5 text-xs text-zinc-200">
-              {provider === "withings" ? "Withings" : "Fitbit"}
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              className="inline-flex items-center rounded-md border border-zinc-700 bg-transparent px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-800"
-              onClick={() => location.reload()}
-            >
-              <RefreshCw className="mr-2 h-4 w-4" /> Refresh
-            </button>
-          </div>
-        </div>
-      </div>
-
       <Header />
       <main className="max-w-7xl mx-auto p-4 md:p-8 space-y-8">
         <section className="space-y-1">
@@ -447,7 +529,7 @@ export default function Dashboard() {
           </p>
         </section>
 
-        {/* Metric grid (video aesthetic) */}
+        {/* Metric grid */}
         <section className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
           <StatCard
             title="Weight"
@@ -455,6 +537,7 @@ export default function Dashboard() {
             value={fmtKg(weight)}
             unit="kg"
             foot="Latest"
+            to="/metrics/weight"
           />
 
           <StatCard
@@ -462,14 +545,17 @@ export default function Dashboard() {
             icon={<Activity className="h-4 w-4" />}
             value={distance != null ? Number(distance).toFixed(2) : "—"}
             unit="km"
+            foot={labelFor(distanceDate)} // show date or "today" here
+            to="/metrics/distance"
           />
 
           <StatCard
             title="Steps"
             icon={<TrendingUp className="h-4 w-4" />}
             value={steps ?? "—"}
-            unit="today"
+            unit={labelFor(stepsDate)} // today or e.g. "27 Oct"
             pulse
+            to="/metrics/steps"
           />
 
           {provider === "fitbit" ? (
@@ -478,12 +564,14 @@ export default function Dashboard() {
                 title="Sleep (total)"
                 icon={<Watch className="h-4 w-4" />}
                 value={fmtHMFromHours(sleepHours)}
+                to="/metrics/sleep"
               />
               <StatCard
                 title="Calories"
                 icon={<Activity className="h-4 w-4" />}
                 value={calories ?? "—"}
-                unit="today"
+                unit={labelFor(caloriesDate)} // today or date
+                to="/metrics/calories"
               />
             </>
           ) : null}
@@ -494,6 +582,7 @@ export default function Dashboard() {
               icon={<Droplets className="h-4 w-4" />}
               value={fmtNumber(spo2, 1)}
               unit={spo2UpdatedAt ? `% • ${fmtTimeHM(spo2UpdatedAt)}` : "%"}
+              to="/metrics/spo2"
             />
           ) : (
             <StatCard
@@ -501,6 +590,7 @@ export default function Dashboard() {
               icon={<Droplets className="h-4 w-4" />}
               value={fmtNumber(spo2, 1)}
               unit="%"
+              to="/metrics/spo2"
             />
           )}
 
@@ -509,6 +599,7 @@ export default function Dashboard() {
             icon={<Thermometer className="h-4 w-4" />}
             value={fmtNumber(tempVar, 1)}
             unit={tempUpdatedAt ? `°C • ${fmtTimeHM(tempUpdatedAt)}` : "°C"}
+            to="/metrics/temperature"
           />
 
           {provider === "withings" ? (
@@ -517,19 +608,43 @@ export default function Dashboard() {
                 title="Average Heart Rate"
                 icon={<HeartPulse className="h-4 w-4" />}
                 value={avgHR != null ? Math.round(avgHR) : "—"}
-                unit={hrUpdatedAt ? `bpm • ${fmtTimeHM(hrUpdatedAt)}` : "bpm"}
+                unit="bpm"
+                foot={
+                  !heartRateDate
+                    ? undefined
+                    : isToday(heartRateDate)
+                    ? "Today"
+                    : shortDay(heartRateDate)
+                }
+                to="/metrics/heart-rate"
               />
               <StatCard
-                title="Max Heart Rate (Today)"
+                title="Max Heart Rate"
                 icon={<HeartPulse className="h-4 w-4" />}
                 value={maxHR != null ? Math.round(maxHR) : "—"}
                 unit="bpm"
+                foot={
+                  !heartRateDate
+                    ? undefined
+                    : isToday(heartRateDate)
+                    ? "Today"
+                    : shortDay(heartRateDate)
+                }
+                to="/metrics/heart-rate"
               />
               <StatCard
-                title="Min Heart Rate (Today)"
+                title="Min Heart Rate"
                 icon={<HeartPulse className="h-4 w-4" />}
                 value={minHR != null ? Math.round(minHR) : "—"}
                 unit="bpm"
+                foot={
+                  !heartRateDate
+                    ? undefined
+                    : isToday(heartRateDate)
+                    ? "Today"
+                    : shortDay(heartRateDate)
+                }
+                to="/metrics/heart-rate"
               />
             </>
           ) : (
@@ -539,12 +654,14 @@ export default function Dashboard() {
                 icon={<HeartPulse className="h-4 w-4" />}
                 value={restingHR ?? "—"}
                 unit="bpm"
+                to="/metrics/heart-rate"
               />
               <StatCard
                 title="Heart Rate Variability (HRV)"
                 icon={<HeartPulse className="h-4 w-4" />}
                 value={hrv ?? "—"}
                 unit="ms"
+                to="/metrics/hrv"
               />
             </>
           )}
@@ -562,6 +679,7 @@ export default function Dashboard() {
                     })}`
                   : "bpm"
               }
+              to="/metrics/ecg"
             />
           )}
         </section>

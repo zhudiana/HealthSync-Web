@@ -1,6 +1,6 @@
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy import String, DateTime
+from sqlalchemy import String, DateTime, Float
 from datetime import datetime
 import uuid
 from app.db.base import Base
@@ -14,7 +14,8 @@ class User(Base):
     auth_user_id: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     email: Mapped[str | None] = mapped_column(String, nullable=True)
     display_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    hr_threshold_low: Mapped[float | None] = mapped_column(Float, nullable=True)
+    hr_threshold_high: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
-    

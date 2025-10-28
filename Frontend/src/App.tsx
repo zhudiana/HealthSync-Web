@@ -4,6 +4,13 @@ import Index from "@/pages/Index";
 import Callback from "@/pages/Callback";
 import Dashboard from "@/pages/Dashboard";
 import AuthCallback from "./pages/AuthCallback";
+import StepsPage from "./pages/metrics/Steps";
+import Weights from "./pages/metrics/Weights";
+import Distance from "./pages/metrics/Distance";
+import Spo2 from "./pages/metrics/Spo2";
+import Temperature from "./pages/metrics/Temperature";
+import AverageHeartRate from "./pages/metrics/AverageHeartRate";
+import ECGPage from "./pages/metrics/ECG";
 
 function Protected({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuth();
@@ -23,6 +30,62 @@ export default function App() {
             element={
               <Protected>
                 <Dashboard />
+              </Protected>
+            }
+          />
+          <Route
+            path="/metrics/steps"
+            element={
+              <Protected>
+                <StepsPage />
+              </Protected>
+            }
+          />
+          <Route
+            path="/metrics/weight"
+            element={
+              <Protected>
+                <Weights />
+              </Protected>
+            }
+          />
+          <Route
+            path="/metrics/distance"
+            element={
+              <Protected>
+                <Distance />
+              </Protected>
+            }
+          />
+          <Route
+            path="/metrics/spo2"
+            element={
+              <Protected>
+                <Spo2 />
+              </Protected>
+            }
+          />
+          <Route
+            path="/metrics/temperature"
+            element={
+              <Protected>
+                <Temperature />
+              </Protected>
+            }
+          />
+          <Route
+            path="/metrics/heart-rate"
+            element={
+              <Protected>
+                <AverageHeartRate />
+              </Protected>
+            }
+          />
+          <Route
+            path="/metrics/ecg"
+            element={
+              <Protected>
+                <ECGPage />
               </Protected>
             }
           />

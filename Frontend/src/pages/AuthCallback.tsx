@@ -34,9 +34,28 @@ export default function AuthCallback() {
         if (provider === "withings") {
           // Withings: SPA exchanges code via /withings/exchange
           data = await exchangeWithingsCode(code, state);
+          if (data?.app_user?.auth_user_id) {
+            localStorage.setItem(
+              "authUserId",
+              String(data.app_user.auth_user_id)
+            );
+          }
+          if (data?.app_user?.id) {
+            localStorage.setItem("userId", String(data.app_user.id));
+          }
         } else {
           // Fitbit: backend GET /fitbit/callback does the exchange
           data = await exchangeFitbitCode(code, state);
+
+          if (data?.app_user?.auth_user_id) {
+            localStorage.setItem(
+              "authUserId",
+              String(data.app_user.auth_user_id)
+            );
+          }
+          if (data?.app_user?.id) {
+            localStorage.setItem("userId", String(data.app_user.id));
+          }
         }
 
         const access = data?.tokens?.access_token ?? data?.access_token;

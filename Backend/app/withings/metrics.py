@@ -527,6 +527,44 @@ def weight_latest(access_token: str, lookback_days: int = Query(90, ge=1, le=365
     }
 
 
+@router.get("/weight/history/cached")
+def weight_history_cached(
+    access_token: str,
+    start: str = Query(..., description="YYYY-MM-DD"),
+    end: str = Query(..., description="YYYY-MM-DD"),
+    db: Session = Depends(get_db),
+):
+    """Try to get weight history data from cache first. If not available, returns 404."""
+    try:
+        user, _tz = _resolve_user_and_tz(db, access_token)
+        
+        # Convert dates
+        try:
+            start_date = datetime.strptime(start, "%Y-%m-%d").date()
+            end_date = datetime.strptime(end, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+
+        from app.db.crud.metrics import get_weight_history
+        items = get_weight_history(db, user.id, "withings", start_date, end_date)
+        
+        if not items:
+            raise HTTPException(status_code=404, detail="No cached weight data found for this date range")
+        
+        return {
+            "start": start,
+            "end": end,
+            "items": items,
+            "fromCache": True
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning(f"Failed to fetch cached weight data: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch cached data")
+
+
 
 @router.get("/weight/history")
 def weight_history(
@@ -561,8 +599,7 @@ def weight_history(
                 v = m.get("value"); u = m.get("unit", 0)
                 w = v * (10 ** u) if isinstance(v,(int,float)) and isinstance(u,(int,float)) else None
         if w is not None and isinstance(ts, (int, float)):
-            day_iso = _date.fromtimestamp(ts).isoformat()
-            items.append({"date": day_iso, "weight": w})
+            items.append({"ts": ts, "weight_kg": w})
 
             # Persist each reading (best-effort)
             try:
@@ -572,6 +609,8 @@ def weight_history(
                     provider_measure_id = str(g.get("grpid")) if isinstance(g, dict) else None
                     device = g.get("deviceid")
 
+                    logger.info(f"Saving weight reading: user={user.id}, weight={w}, ts={ts}, measured_at={measured_at_utc}")
+                    
                     _upsert_weight_reading(
                         db,
                         user_id=user.id,
@@ -591,11 +630,13 @@ def weight_history(
                         tz_str=tz_str,
                         weight_kg=float(w),
                     )
-            except Exception:
+                    logger.info("Successfully saved weight reading")
+            except Exception as e:
+                logger.error(f"Failed to save weight reading: {e}")
                 pass
 
-    # optional: sort by date
-    items.sort(key=lambda x: x["date"])
+    # optional: sort by timestamp
+    items.sort(key=lambda x: x["ts"])
     try:
         db.commit()
     except Exception:
@@ -604,7 +645,7 @@ def weight_history(
     return {"start": start, "end": end, "items": items}
 
 
-@router.get("/heart-rate/cached/{date}")
+@router.get("/heart-rate/daily/cached/{date}")
 def heart_rate_daily_cached(
     date: str,
     access_token: str,
@@ -623,23 +664,16 @@ def heart_rate_daily_cached(
         from app.db import crud
         hr_data = crud.get_heart_rate_daily(db, user.id, "withings", date_obj)
         
-        if hr_data:
-            return {
-                "date": date,
-                "hr_average": hr_data.hr_average,
-                "hr_min": hr_data.hr_min,
-                "hr_max": hr_data.hr_max,
-                "updatedAt": int(hr_data.updated_at.timestamp()) if hr_data.updated_at else None,
-                "fromCache": True
-            }
-        
+        if not hr_data:
+            raise HTTPException(status_code=404, detail="No cached data found for this date")
+            
         return {
             "date": date,
-            "hr_average": None,
-            "hr_min": None,
-            "hr_max": None,
-            "updatedAt": None,
-            "fromCache": False
+            "avg_bpm": hr_data.avg_bpm,
+            "min_bpm": hr_data.min_bpm,
+            "max_bpm": hr_data.max_bpm,
+            "updatedAt": int(hr_data.updated_at.timestamp()) if hr_data.updated_at else None,
+            "fromCache": True
         }
         
     except Exception as e:
@@ -1325,7 +1359,6 @@ def hrv_nightly(
         "items": items,
         "latest": (items[-1] if items else None)
     }
-
 
 
 

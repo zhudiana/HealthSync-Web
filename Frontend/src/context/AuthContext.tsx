@@ -11,11 +11,19 @@ import {
 type Profile = any;
 type Provider = "fitbit" | "withings" | null;
 
+type User = {
+  withings?: {
+    accessToken: string;
+  };
+  profile?: Profile;
+};
+
 type AuthCtx = {
   isAuthenticated: boolean;
   provider: Provider;
   profile: Profile | null;
   loading: boolean;
+  user: User | null;
   loginStart: (
     provider: Exclude<Provider, null>,
     scope?: string
@@ -29,6 +37,7 @@ const Ctx = createContext<AuthCtx>({
   provider: null,
   profile: null,
   loading: false,
+  user: null,
   loginStart: async () => {},
   logout: async () => {},
   getAccessToken: async () => null,
@@ -108,7 +117,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (provider === "withings") {
       try {
         const data = await fetchProfile(access, "withings"); // hits /withings/profile
-        // Return a flat object; dashboard greets from fullName/first+last
         setProfile(data ?? { fullName: "Withings User" });
         setAuth(true);
         return;
@@ -249,6 +257,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         provider,
         profile,
         loading,
+        user: profile
+          ? {
+              withings:
+                provider === "withings"
+                  ? {
+                      accessToken: tokens.getAccess("withings") || "",
+                    }
+                  : undefined,
+              profile,
+            }
+          : null,
         loginStart,
         logout,
         getAccessToken,

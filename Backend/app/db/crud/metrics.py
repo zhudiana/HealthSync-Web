@@ -1,5 +1,5 @@
 from __future__ import annotations
-from datetime import datetime, date as _date
+from datetime import datetime
 from sqlalchemy.orm import Session
 from sqlalchemy.dialects.postgresql import insert
 from app.db.models.steps import StepsDaily, StepsIntraday
@@ -474,16 +474,4 @@ def _update_snapshot_temperature(
     db.execute(stmt)
 
 
-def get_heart_rate_daily(
-    db: Session, 
-    user_id: int, 
-    provider: str, 
-    date: _date
-) -> HeartRateDaily | None:
-    """Get heart rate daily record for a specific date from cache"""
-    return db.query(HeartRateDaily).filter(
-        HeartRateDaily.user_id == user_id,
-        HeartRateDaily.provider == provider,
-        HeartRateDaily.date_local == date
-    ).first()
 

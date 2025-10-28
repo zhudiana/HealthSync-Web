@@ -310,6 +310,25 @@ export async function withingsWeightLatest(accessToken: string) {
   return d as { value: number | null; latest_date: string | null };
 }
 
+export async function withingsWeightHistory(
+  accessToken: string,
+  start: string, // YYYY-MM-DD
+  end: string // YYYY-MM-DD
+) {
+  const u = new URL(`${API_BASE_URL}/withings/metrics/weight/history`);
+  u.searchParams.set("access_token", accessToken);
+  u.searchParams.set("start", start);
+  u.searchParams.set("end", end);
+  const r = await fetch(u.toString(), { credentials: "include" });
+  const d = await r.json();
+  if (!r.ok) throw new Error(d?.detail || "withings weight history failed");
+  return d as {
+    start: string;
+    end: string;
+    items: { ts: number; weight_kg: number; device?: string }[];
+  };
+}
+
 export async function withingsMetricsDaily(accessToken: string, date?: string) {
   const url = new URL(`${API_BASE_URL}/withings/metrics/daily`);
   url.searchParams.set("access_token", accessToken);
@@ -410,15 +429,15 @@ export async function withingsTemperature(
 
 export async function withingsECG(
   accessToken: string,
-  start: string,
-  end: string,
+  start?: string,
+  end?: string,
   tz: string = "Europe/Rome",
   limit: number = 25
 ) {
   const u = new URL(`${API_BASE_URL}/withings/metrics/ecg`);
   u.searchParams.set("access_token", accessToken);
-  u.searchParams.set("start", start);
-  u.searchParams.set("end", end);
+  if (start) u.searchParams.set("start", start);
+  if (end) u.searchParams.set("end", end);
   u.searchParams.set("tz", tz);
   u.searchParams.set("limit", String(limit));
 
@@ -451,4 +470,99 @@ export async function withingsECG(
       model: number | string | null;
     } | null;
   };
+}
+
+// Analytics
+export type StepPoint = {
+  date: string;
+  steps: number;
+  distance_km?: number;
+  calories?: number;
+};
+
+export async function stepsSeries(
+  accessToken: string,
+  provider: "fitbit" | "withings",
+  fromISO: string, // YYYY-MM-DD
+  toISO: string // YYYY-MM-DD
+): Promise<StepPoint[]> {
+  const url = new URL(
+    provider === "withings"
+      ? "/withings/metrics/steps/series"
+      : "/fitbit/metrics/steps/series",
+    API_BASE_URL
+  );
+  url.searchParams.set("access_token", accessToken);
+  url.searchParams.set("from", fromISO);
+  url.searchParams.set("to", toISO);
+
+  try {
+    const res = await fetch(url.toString(), { credentials: "include" });
+    const contentType = res.headers.get("content-type") || "";
+
+    // Parse JSON only if it's JSON
+    const raw = contentType.includes("application/json")
+      ? await res.json()
+      : null;
+
+    if (!res.ok) {
+      const detail =
+        (raw && (raw.detail || raw.message)) ||
+        `Failed to load steps series (${res.status})`;
+      throw new Error(detail);
+    }
+
+    // Support both shapes: an array or { items: [...] }
+    const items = Array.isArray(raw) ? raw : raw?.items ?? [];
+
+    // Ensure we return StepPoint[] with minimal coercion
+    return items.map((p: any) => ({
+      date: String(p.date),
+      steps: Number(p.steps ?? 0),
+      distance_km: p.distance_km ?? undefined,
+      calories: p.calories ?? undefined,
+    })) as StepPoint[];
+  } catch (error) {
+    console.error("stepsSeries error:", error);
+    throw error;
+  }
+}
+
+// --- Withings: steps for a single day (maps to GET /withings/metrics/daily) ---
+export async function withingsStepsDaily(accessToken: string, date: string) {
+  const u = new URL(`${API_BASE_URL}/withings/metrics/daily`);
+  u.searchParams.set("access_token", accessToken);
+  u.searchParams.set("date", date); // YYYY-MM-DD
+  const r = await fetch(u.toString(), { credentials: "include" });
+  const d = await r.json();
+  if (!r.ok) throw new Error(d?.detail || "withings steps daily failed");
+  // { date, steps, distanceKm, calories?, sleepHours? }
+  return d as {
+    date: string;
+    steps: number | null;
+    distanceKm: number | null;
+    calories?: number | null;
+    sleepHours?: number | null;
+  };
+}
+
+// Fetch steps for each date in [start, end] inclusive.
+// Keep for next step when we wire the Steps page.
+export async function withingsStepsRange(
+  accessToken: string,
+  start: string, // YYYY-MM-DD
+  end: string // YYYY-MM-DD
+) {
+  const dates: string[] = [];
+  {
+    const s = new Date(start + "T00:00:00");
+    const e = new Date(end + "T00:00:00");
+    for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
+      dates.push(d.toISOString().slice(0, 10));
+    }
+  }
+  const results = await Promise.all(
+    dates.map((d) => withingsStepsDaily(accessToken, d))
+  );
+  return results; // array of {date, steps, ...}
 }

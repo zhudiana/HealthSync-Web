@@ -1,10 +1,16 @@
-// src/components/Header.tsx
 import { useState, useRef, useEffect } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { getUserByAuth } from "@/lib/api";
 import EditProfileDialog from "@/components/EditProfileDialog";
+import { Watch, RefreshCw } from "lucide-react";
+import { Link } from "react-router-dom";
 
-export default function Header() {
+interface HeaderProps {
+  className?: string;
+  children?: React.ReactNode;
+}
+
+export default function Header({ className, children }: HeaderProps) {
   const { profile, logout, provider } = useAuth();
 
   function fallbackName() {
@@ -21,6 +27,20 @@ export default function Header() {
   }
 
   const [displayName, setDisplayName] = useState<string>(fallbackName());
+
+  useEffect(() => {
+    const storedAuthUserId = localStorage.getItem("authUserId");
+    if (storedAuthUserId) {
+      getUserByAuth(storedAuthUserId)
+        .then((user) => {
+          if (user.display_name) {
+            setDisplayName(user.display_name);
+          }
+        })
+        .catch((err) => console.error("Failed to load user:", err));
+    }
+  }, []);
+
   const avatar =
     (provider === "fitbit" ? profile?.avatar150 || profile?.avatar : null) ||
     "https://static0.fitbit.com/images/profile/defaultProfile_150.png";
@@ -55,20 +75,30 @@ export default function Header() {
       .then((u) => {
         if (u?.display_name) setDisplayName(u.display_name);
       })
-      .catch(() => {
-        /* ignore; keep fallback */
-      });
-    // re-run when provider/profile changes to keep fallback fresh
+      .catch(() => {});
   }, [provider, profile?.fullName, profile?.displayName]);
 
   return (
-    <header className="sticky top-0 z-20 backdrop-blur supports-[backdrop-filter]:bg-background/70 bg-background/60 border-b border-white/10">
-      <div className="max-w-6xl mx-auto h-14 px-4 flex items-center justify-between">
-        <div className="font-bold tracking-tight">
-          <span className="text-foreground">Health</span>
-          <span className="text-primary">Sync</span>
-        </div>
-
+    <header
+      className={`sticky top-0 z-20 backdrop-blur supports-[backdrop-filter]:bg-background/70 bg-background/60 border-b border-white/10 ${
+        className || ""
+      }`}
+    >
+      <div className="w-full h-16 pl-2 pr-4 flex items-center justify-between">
+        {children || (
+          <div className="flex items-center gap-2 font-bold tracking-tight">
+            <Watch className="h-5 w-5" />
+            <Link to={"/"}>
+              <div className="text-lg leading-none">
+                <span className="text-foreground">Health</span>
+                <span className="text-primary">Sync</span>
+              </div>
+            </Link>
+            <span className="rounded-md border border-white/10 bg-white/5 px-2 py-0.5 text-xs text-muted-foreground">
+              {provider === "withings" ? "Withings" : "Fitbit"}
+            </span>
+          </div>
+        )}
         <div className="relative" ref={menuRef}>
           <button
             onClick={() => setOpen((v) => !v)}
@@ -102,13 +132,30 @@ export default function Header() {
               <button
                 className="w-full text-left text-sm px-3 py-2 rounded-lg hover:bg-white/5"
                 onClick={() => {
+                  setOpen(false);
+                  location.reload();
+                }}
+              >
+                <span className="inline-flex items-center gap-2">
+                  <RefreshCw className="h-4 w-4" />
+                  Refresh
+                </span>
+              </button>
+
+              <div className="h-px bg-white/10 my-1" />
+
+              <button
+                className="w-full text-left text-sm px-3 py-2 rounded-lg hover:bg-white/5"
+                onClick={() => {
                   setShowEdit(true);
                   setOpen(false);
                 }}
               >
                 Edit profile
               </button>
+
               <div className="h-px bg-white/10 my-1" />
+
               <button
                 onClick={logout}
                 className="w-full text-left text-sm px-3 py-2 rounded-lg hover:bg-white/5"
