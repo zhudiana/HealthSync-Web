@@ -62,8 +62,6 @@ def _user_tz(headers) -> ZoneInfo:
 
 
 
-
-
 def _resolve_user_and_tz(db: Session, access_token: str) -> tuple[User, str]:
     """
     Resolve app user + tz from access token by looking up in WithingsAccount table.
@@ -605,6 +603,48 @@ def weight_history(
 
     return {"start": start, "end": end, "items": items}
 
+
+@router.get("/heart-rate/cached/{date}")
+def heart_rate_daily_cached(
+    date: str,
+    access_token: str,
+    db: Session = Depends(get_db),
+):
+    """Try to get heart rate data from cache first. If not available, returns empty response."""
+    try:
+        user, _tz = _resolve_user_and_tz(db, access_token)
+        
+        # Query from database
+        try:
+            date_obj = datetime.strptime(date, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+
+        from app.db import crud
+        hr_data = crud.get_heart_rate_daily(db, user.id, "withings", date_obj)
+        
+        if hr_data:
+            return {
+                "date": date,
+                "hr_average": hr_data.hr_average,
+                "hr_min": hr_data.hr_min,
+                "hr_max": hr_data.hr_max,
+                "updatedAt": int(hr_data.updated_at.timestamp()) if hr_data.updated_at else None,
+                "fromCache": True
+            }
+        
+        return {
+            "date": date,
+            "hr_average": None,
+            "hr_min": None,
+            "hr_max": None,
+            "updatedAt": None,
+            "fromCache": False
+        }
+        
+    except Exception as e:
+        logger.warning(f"Failed to fetch cached heart rate data: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch cached data")
 
 
 @router.get("/heart-rate/daily")
