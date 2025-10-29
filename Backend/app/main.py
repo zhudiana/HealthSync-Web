@@ -7,6 +7,10 @@ from app.db.models import User, WithingsAccount, MetricDaily, MetricIntraday
 from app.db.base import Base
 from app.db.engine import engine
 from app.routes import users as users_routes
+from app.core.email import EmailConfig
+from app.core.tasks import start_background_tasks
+import asyncio
+import os
 
 
 app = FastAPI()
@@ -27,5 +31,12 @@ app.add_middleware(
 )
 
 @app.on_event("startup")
-def create_tables():
+async def startup_event():
+    # Create database tables
     Base.metadata.create_all(bind=engine)
+    
+    # Initialize email configuration from environment variables
+    EmailConfig.load_from_env()
+    
+    # Start background tasks
+    asyncio.create_task(start_background_tasks())

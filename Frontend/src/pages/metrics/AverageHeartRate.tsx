@@ -155,6 +155,8 @@ export default function AverageHeartRate() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [series, setSeries] = useState<HeartRatePoint[]>([]);
+  const [autoRefresh, setAutoRefresh] = useState(true); // Auto-refresh enabled by default
+  const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
   const [dialogOpen, setDialogOpen] = useState(false);
   const [thresholds, setThresholds] = useState<{
     low: number | null;
@@ -190,6 +192,22 @@ export default function AverageHeartRate() {
       const dailyData: HeartRatePoint[] = [];
       let currentDate = new Date(dateFrom);
       const endDate = new Date(dateTo);
+
+      // Pre-fetch today's data first to ensure it's fresh
+      const todayStr = formatDate(new Date());
+      try {
+        const todayData = await withingsHeartRateDaily(accessToken, todayStr);
+        if (todayData?.hr_average !== null) {
+          dailyData.push({
+            date: todayStr,
+            avg_bpm: todayData.hr_average,
+            min_bpm: todayData.hr_min,
+            max_bpm: todayData.hr_max,
+          });
+        }
+      } catch (e) {
+        console.error("Failed to fetch today's heart rate:", e);
+      }
 
       while (currentDate <= endDate) {
         const dateStr = formatDate(currentDate);
@@ -237,9 +255,22 @@ export default function AverageHeartRate() {
     }
   }
 
+  // Initial load effect
   useEffect(() => {
     load();
   }, [range, dateFrom, dateTo]);
+
+  // Auto-refresh effect
+  useEffect(() => {
+    if (!autoRefresh) return;
+
+    const interval = setInterval(() => {
+      load();
+      setLastRefresh(new Date());
+    }, 5 * 60 * 1000); // Refresh every 5 minutes
+
+    return () => clearInterval(interval);
+  }, [autoRefresh, range, dateFrom, dateTo]);
 
   // Load initial thresholds
   useEffect(() => {
@@ -301,15 +332,33 @@ export default function AverageHeartRate() {
             </select>
 
             <button
+              onClick={() => setAutoRefresh(!autoRefresh)}
+              className={`inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-md border ${
+                autoRefresh
+                  ? "border-blue-700 bg-blue-900/20"
+                  : "border-zinc-700"
+              } hover:bg-zinc-800 text-zinc-200`}
+              title={`Auto-refresh is ${autoRefresh ? "on" : "off"}`}
+            >
+              <RefreshCw
+                className={`h-4 w-4 ${autoRefresh ? "animate-spin" : ""}`}
+              />
+              {autoRefresh ? "Auto" : "Manual"}
+            </button>
+
+            <button
               onClick={() => setDialogOpen(true)}
               className="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-md border border-zinc-700 hover:bg-zinc-800 text-zinc-200"
             >
               <Heart className="h-4 w-4" />
-              Adjust Thrushold
+              Adjust Threshold
             </button>
 
             <button
-              onClick={() => load()}
+              onClick={() => {
+                load();
+                setLastRefresh(new Date());
+              }}
               disabled={loading}
               className="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-md border border-zinc-700 hover:bg-zinc-800 text-zinc-200"
             >
@@ -377,6 +426,11 @@ export default function AverageHeartRate() {
             >
               <HeartRateChart data={series} loading={loading} />
             </motion.div>
+
+            {/* Last refresh time */}
+            <p className="text-sm text-zinc-500 mt-2">
+              Last updated: {lastRefresh.toLocaleTimeString()}
+            </p>
 
             {/* Data table */}
             {series.length > 0 && (
