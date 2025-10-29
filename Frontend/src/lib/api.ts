@@ -264,12 +264,19 @@ export async function getUserByAuth(authUserId: string) {
     auth_user_id: string;
     email: string | null;
     display_name: string | null;
+    hr_threshold_low: number | null;
+    hr_threshold_high: number | null;
   };
 }
 
 export async function updateUserByAuth(
   authUserId: string,
-  body: { display_name?: string; email?: string }
+  body: {
+    display_name?: string;
+    email?: string;
+    hr_threshold_low?: number | null;
+    hr_threshold_high?: number | null;
+  }
 ) {
   const r = await fetch(
     `${API_BASE_URL}/users/by-auth/${encodeURIComponent(authUserId)}`,
@@ -565,4 +572,31 @@ export async function withingsStepsRange(
     dates.map((d) => withingsStepsDaily(accessToken, d))
   );
   return results; // array of {date, steps, ...}
+}
+
+// ADD THIS next to withingsWeightHistory()
+export async function withingsWeightHistoryCached(
+  accessToken: string,
+  start: string, // YYYY-MM-DD
+  end: string // YYYY-MM-DD
+) {
+  const u = new URL(`${API_BASE_URL}/withings/metrics/weight/history/cached`);
+  u.searchParams.set("access_token", accessToken);
+  u.searchParams.set("start", start);
+  u.searchParams.set("end", end);
+
+  const r = await fetch(u.toString(), { credentials: "include" });
+
+  // If there's no cache, the backend returns 404 — treat that as a cache miss, not an error.
+  if (r.status === 404) return null;
+
+  const d = await r.json();
+  if (!r.ok)
+    throw new Error(d?.detail || "withings weight history (cached) failed");
+  return d as {
+    start: string;
+    end: string;
+    items: { ts: number; weight_kg: number; device?: string }[];
+    fromCache?: boolean;
+  } | null;
 }

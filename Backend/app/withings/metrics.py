@@ -653,28 +653,23 @@ def heart_rate_daily_cached(
 ):
     """Try to get heart rate data from cache first. If not available, returns empty response."""
     try:
-        user, _tz = _resolve_user_and_tz(db, access_token)
-        
-        # Query from database
+        # Convert date string to date object
         try:
-            date_obj = datetime.strptime(date, "%Y-%m-%d").date()
+            date_local = datetime.strptime(date, "%Y-%m-%d").date()
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
-
-        from app.db import crud
-        hr_data = crud.get_heart_rate_daily(db, user.id, "withings", date_obj)
-        
-        if not hr_data:
-            raise HTTPException(status_code=404, detail="No cached data found for this date")
             
-        return {
-            "date": date,
-            "avg_bpm": hr_data.avg_bpm,
-            "min_bpm": hr_data.min_bpm,
-            "max_bpm": hr_data.max_bpm,
-            "updatedAt": int(hr_data.updated_at.timestamp()) if hr_data.updated_at else None,
-            "fromCache": True
-        }
+        # Get user from access token
+        user, _ = _resolve_user_and_tz(db, access_token)
+        
+        # Get heart rate data from cache
+        from app.db.crud.metrics import get_heart_rate_daily
+        data = get_heart_rate_daily(db, user.id, "withings", date_local)
+        
+        if not data:
+            raise HTTPException(status_code=404, detail="No cached heart rate data found for this date")
+            
+        return data
         
     except Exception as e:
         logger.warning(f"Failed to fetch cached heart rate data: {e}")
@@ -1360,6 +1355,53 @@ def hrv_nightly(
         "latest": (items[-1] if items else None)
     }
 
+
+@router.get("/steps/series")
+def steps_series(
+    access_token: str,
+    from_: str = Query(..., alias="from", description="YYYY-MM-DD"),
+    to:   str = Query(..., alias="to",   description="YYYY-MM-DD"),
+    db: Session = Depends(get_db),
+):
+    """
+    Returns a per-day series between [from, to] inclusive.
+    Each item: { date, steps, distance_km }
+    Internally reuses the existing /daily logic (so today gets intraday merge).
+    """
+    # Parse & normalize dates
+    try:
+        start_date = datetime.fromisoformat(from_).date()
+        end_date   = datetime.fromisoformat(to).date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+
+    if end_date < start_date:
+        start_date, end_date = end_date, start_date
+
+    items = []
+    cur = start_date
+    while cur <= end_date:
+        # Reuse the daily handler so we keep all your intraday/merge/persist rules
+        daily = daily_metrics(
+            response=Response(),
+            access_token=access_token,
+            date=cur.isoformat(),
+            fallback_days=0,  # don’t jump to other days in a range call
+            debug=0,
+            db=db,
+        )
+        steps = daily.get("steps")
+        dist_km = daily.get("distanceKm")  # daily returns camelCase; we expose snake_case
+
+        items.append({
+            "date": cur.isoformat(),
+            "steps": int(steps or 0),
+            "distance_km": float(dist_km) if isinstance(dist_km, (int, float)) else 0.0,
+        })
+        cur += timedelta(days=1)
+
+    # Optional: sort (already ascending) and return
+    return {"items": items}
 
 
 

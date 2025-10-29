@@ -1,3 +1,4 @@
+// src/pages/Dashboard.tsx
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import {
@@ -9,6 +10,7 @@ import {
   Droplets,
   TrendingUp,
   RefreshCw,
+  Loader2, // NEW
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
@@ -28,7 +30,7 @@ import {
   getUserByAuth,
 } from "@/lib/api";
 
-// ---------- local stat card (no shadcn version) ----------
+// ---------- local stat card ----------
 function StatCard({
   title,
   icon,
@@ -36,7 +38,8 @@ function StatCard({
   unit,
   foot,
   pulse,
-  to, // optional link target
+  to,
+  loading, // NEW
 }: {
   title: string;
   icon: JSX.Element;
@@ -45,8 +48,9 @@ function StatCard({
   foot?: string | null;
   pulse?: boolean;
   to?: string;
+  loading?: boolean; // NEW
 }) {
-  const CardInner = (
+  const content = (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
@@ -68,21 +72,30 @@ function StatCard({
           {pulse && (
             <span
               className="inline-flex h-2 w-2 rounded-full bg-emerald-400 animate-pulse"
-              aria-hidden="true"
+              aria-hidden
             />
           )}
         </div>
+
         <div className="pt-0">
           <div className="flex items-end justify-between gap-4">
             <div>
-              <div className="text-3xl font-semibold text-white">
-                {value ?? "—"}
-                {unit ? (
-                  <span className="ml-2 text-base font-normal text-zinc-400">
-                    {unit}
-                  </span>
-                ) : null}
+              <div className="text-3xl font-semibold text-white min-h-[2.25rem] flex items-center">
+                {/* value / spinner */}
+                {loading ? (
+                  <Loader2 className="h-5 w-5 animate-spin text-zinc-400" />
+                ) : (
+                  <>
+                    {value ?? "—"}
+                    {unit ? (
+                      <span className="ml-2 text-base font-normal text-zinc-400">
+                        {unit}
+                      </span>
+                    ) : null}
+                  </>
+                )}
               </div>
+              {/* foot */}
               {foot ? (
                 <div className="mt-1 text-xs text-zinc-400">{foot}</div>
               ) : null}
@@ -90,7 +103,7 @@ function StatCard({
             {to && (
               <span
                 className="text-xs text-zinc-500 opacity-0 group-hover:opacity-100 transition"
-                aria-hidden="true"
+                aria-hidden
               >
                 View details →
               </span>
@@ -107,10 +120,10 @@ function StatCard({
       aria-label={`View detailed ${title} analytics`}
       className="block focus:outline-none"
     >
-      {CardInner}
+      {content}
     </Link>
   ) : (
-    CardInner
+    content
   );
 }
 
@@ -120,6 +133,7 @@ export default function Dashboard() {
   const [info, setInfo] = useState<any>(null);
   const [err, setErr] = useState<string | null>(null);
 
+  // values
   const [steps, setSteps] = useState<number | null>(null);
   const [restingHR, setRestingHR] = useState<number | null>(null);
   const [sleepHours, setSleepHours] = useState<number | null>(null);
@@ -132,7 +146,7 @@ export default function Dashboard() {
   const [tempUpdatedAt, setTempUpdatedAt] = useState<number | null>(null);
   const [distance, setDistance] = useState<number | null>(null);
   const [avgHR, setAvgHR] = useState<number | null>(null);
-  const [hrUpdatedAt, setHrUpdatedAt] = useState<number | null>(null); // epoch seconds
+  const [hrUpdatedAt, setHrUpdatedAt] = useState<number | null>(null);
   const [maxHR, setMaxHR] = useState<number | null>(null);
   const [minHR, setMinHR] = useState<number | null>(null);
   const [ecgHR, setEcgHR] = useState<number | null>(null);
@@ -140,13 +154,50 @@ export default function Dashboard() {
 
   const [dbDisplayName, setDbDisplayName] = useState<string | null>(null);
 
-  // Dates for labels
+  // labels / dates
   const [stepsDate, setStepsDate] = useState<string | null>(null);
   const [distanceDate, setDistanceDate] = useState<string | null>(null);
   const [caloriesDate, setCaloriesDate] = useState<string | null>(null);
   const [heartRateDate, setHeartRateDate] = useState<string | null>(null);
 
-  // ---------- helpers ----------
+  // NEW: loading state per metric
+  const [loading, setLoading] = useState<
+    Record<
+      | "weight"
+      | "distance"
+      | "steps"
+      | "sleep"
+      | "calories"
+      | "restingHR"
+      | "hrv"
+      | "spo2"
+      | "temperature"
+      | "avgHR"
+      | "maxHR"
+      | "minHR"
+      | "ecg",
+      boolean
+    >
+  >({
+    weight: true,
+    distance: true,
+    steps: true,
+    sleep: true,
+    calories: true,
+    restingHR: true,
+    hrv: true,
+    spo2: true,
+    temperature: true,
+    avgHR: true,
+    maxHR: true,
+    minHR: true,
+    ecg: true,
+  });
+
+  const setLoad = (key: keyof typeof loading, val: boolean) =>
+    setLoading((s) => ({ ...s, [key]: val }));
+
+  // helpers
   const ymd = (d = new Date()) => d.toISOString().slice(0, 10);
   const ymdYesterday = () => {
     const d = new Date();
@@ -181,7 +232,6 @@ export default function Dashboard() {
           minute: "2-digit",
         });
 
-  // NEW: date label helpers
   const isToday = (iso?: string | null) => {
     if (!iso) return false;
     const d = new Date(iso);
@@ -200,12 +250,11 @@ export default function Dashboard() {
           month: "short",
         });
   const labelFor = (iso?: string | null, fallback: string = "—") =>
-    iso ? (isToday(iso) ? "today" : shortDay(iso)!) : fallback;
+    iso ? (isToday(iso) ? "Today" : shortDay(iso)!) : fallback;
 
-  // ---------- initial load ----------
+  // initial load
   useEffect(() => {
     let mounted = true;
-    const ac = new AbortController();
 
     (async () => {
       try {
@@ -215,7 +264,7 @@ export default function Dashboard() {
           return;
         }
 
-        // 1) Load display name from DB
+        // DB display name
         const authId = localStorage.getItem("authUserId");
         if (authId) {
           try {
@@ -226,7 +275,7 @@ export default function Dashboard() {
           }
         }
 
-        // 2) Get access token
+        // token
         const access = await getAccessToken();
         if (!access) {
           if (!mounted) return;
@@ -234,7 +283,7 @@ export default function Dashboard() {
           return;
         }
 
-        // 3) Provider profile
+        // profile
         try {
           const profResp = await fetchProfile(access, provider);
           const p = provider === "fitbit" ? profResp?.user : profResp;
@@ -247,42 +296,53 @@ export default function Dashboard() {
           }
         } catch {
           if (!mounted) return;
-          if (provider === "withings") {
+          if (provider === "withings")
             setProfile({ fullName: "Withings User" });
-          } else {
-            throw new Error("Failed to load profile");
-          }
         }
 
-        // 4) Metrics
         if (provider === "fitbit") {
-          const ov = await metricsOverview(access);
-          if (!mounted) return;
+          // Overview
+          try {
+            const ov = await metricsOverview(access);
 
-          setSteps(ov.steps ?? null);
-          setStepsDate(ov.date ?? null);
+            if (!mounted) return;
 
-          setCalories(ov.calories?.total ?? ov.caloriesOut ?? null);
-          setCaloriesDate(ov.date ?? null);
+            setSteps(ov.steps ?? null);
+            setStepsDate(ov.date ?? null);
+            setLoad("steps", false);
 
-          setDistance(ov.total_km ?? null);
-          setDistanceDate(ov.date ?? null);
+            setCalories(ov.calories?.total ?? ov.caloriesOut ?? null);
+            setCaloriesDate(ov.date ?? null);
+            setLoad("calories", false);
 
-          // Sleep today; fallback to yesterday
-          let sleep = await fitbitMetrics.sleep(access);
-          let totalHours = sleep?.hoursAsleep ?? null;
-
-          if (!totalHours || totalHours === 0) {
-            const y = new Date();
-            y.setDate(y.getDate() - 1);
-            const ymdStr = y.toISOString().slice(0, 10);
-            const s2 = await fitbitMetrics.sleep(access, ymdStr);
-            totalHours = s2?.hoursAsleep ?? null;
+            setDistance(ov.total_km ?? null);
+            setDistanceDate(ov.date ?? null);
+            setLoad("distance", false);
+          } catch {
+            setLoad("steps", false);
+            setLoad("calories", false);
+            setLoad("distance", false);
           }
-          if (!mounted) return;
-          setSleepHours(totalHours);
 
-          // HRV (latest in a 2-day window)
+          // Sleep
+          try {
+            let sleep = await fitbitMetrics.sleep(access);
+            let totalHours = sleep?.hoursAsleep ?? null;
+            if (!totalHours || totalHours === 0) {
+              const y = new Date();
+              y.setDate(y.getDate() - 1);
+              const s2 = await fitbitMetrics.sleep(
+                access,
+                y.toISOString().slice(0, 10)
+              );
+              totalHours = s2?.hoursAsleep ?? null;
+            }
+            if (mounted) setSleepHours(totalHours);
+          } finally {
+            setLoad("sleep", false);
+          }
+
+          // HRV
           try {
             const today = new Date();
             const start = ymd(
@@ -301,37 +361,41 @@ export default function Dashboard() {
                 .pop();
               setHrv(latest?.rmssd_ms ?? null);
             }
-          } catch {
-            if (mounted) setHrv(null);
+          } finally {
+            setLoad("hrv", false);
           }
 
-          // Nightly SpO₂
+          // Nightly SpO2
           try {
             const todayStr = ymd();
             let s = await fitbitMetrics.spo2Nightly(access, todayStr);
             let avg = s?.average ?? null;
-
             if (avg == null) {
               const y = new Date();
               y.setDate(y.getDate() - 1);
               s = await fitbitMetrics.spo2Nightly(access, ymd(y));
               avg = s?.average ?? null;
             }
-            if (mounted) setSpo2(avg);
-          } catch {
-            if (mounted) setSpo2(null);
+            if (mounted) {
+              setSpo2(avg);
+              // Fitbit nightly endpoint returns a single date; we reuse todayStr as label
+              setSpo2UpdatedAt(Date.parse(todayStr) / 1000);
+            }
+          } finally {
+            setLoad("spo2", false);
           }
 
-          // Skin temperature variability
+          // Temperature variability
           try {
             const endStr = ymd();
             const t = await fitbitMetrics.temperature(access, endStr, endStr);
             if (mounted) {
               const last = t?.items?.[t.items.length - 1];
               setTempVar(last?.delta_c ?? null);
+              setTempUpdatedAt(Date.parse(endStr) / 1000);
             }
-          } catch {
-            if (mounted) setTempVar(null);
+          } finally {
+            setLoad("temperature", false);
           }
 
           // Token info (optional)
@@ -341,99 +405,95 @@ export default function Dashboard() {
           } catch {
             /* ignore */
           }
+
+          // resting HR (from overview/fitbit profile not shown separately on fitbit path)
+          setLoad("restingHR", false);
+          setLoad("avgHR", false);
+          setLoad("maxHR", false);
+          setLoad("minHR", false);
+          setLoad("weight", false);
+          setLoad("ecg", false);
         } else {
           // WITHINGS
+          const todayStr = ymd();
+
+          // Overview + daily + latest weight in parallel
           try {
-            const todayStr = ymd();
             const [w, d, latestW] = await Promise.all([
               withingsMetricsOverview(access),
               withingsMetricsDaily(access, todayStr),
               withingsWeightLatest(access),
             ]);
-
             if (!mounted) return;
 
-            // Set weight from latest measurement
+            // weight
             setWeight(latestW.value ?? null);
-            setRestingHR(w.restingHeartRate ?? null);
+            setLoad("weight", false);
 
-            // Get today's metrics if available, otherwise use latest
+            // resting HR
+            setRestingHR(w.restingHeartRate ?? null);
+            setLoad("restingHR", false);
+
+            // steps / calories / distance (+ dates)
             setSteps(d.steps ?? null);
             setStepsDate(d.date ?? null);
+            setLoad("steps", false);
 
             setCalories(d.calories ?? null);
             setCaloriesDate(d.date ?? null);
+            setLoad("calories", false);
 
             setSleepHours(d.sleepHours ?? null);
-
             setDistance(d.distanceKm ?? null);
             setDistanceDate(d.date ?? null);
+            setLoad("sleep", false);
+            setLoad("distance", false);
+          } catch {
+            setLoad("weight", false);
+            setLoad("restingHR", false);
+            setLoad("steps", false);
+            setLoad("calories", false);
+            setLoad("sleep", false);
+            setLoad("distance", false);
+          }
 
-            // Temperature (latest)
-            withingsTemperature(access, undefined, undefined)
-              .then((t) => {
-                if (!mounted) return;
-                if (t?.latest?.body_c) {
-                  setTempVar(t.latest.body_c);
-                } else {
-                  setTempVar(null);
-                }
-              })
-              .catch(() => {
-                if (mounted) setTempVar(null);
-              });
+          // Temperature (window & latest)
+          withingsTemperature(access, todayStr, todayStr)
+            .then((t) => {
+              if (!mounted) return;
+              const item = t?.latest;
+              const skin = item?.skin_c ?? null;
+              const body = item?.body_c ?? null;
+              setTempVar(body ?? skin ?? null);
+              setTempUpdatedAt(item?.ts ?? null);
+            })
+            .finally(() => setLoad("temperature", false));
 
-            // ECG (latest) - fetch without date restriction
-            withingsECG(access, undefined, undefined, "Europe/Rome", 1)
-              .then((e) => {
-                if (!mounted) return;
-                if (e?.latest) {
-                  setEcgHR(e.latest.heart_rate ?? null);
-                  setEcgTime(e.latest.time_iso ?? null);
-                } else {
-                  setEcgHR(null);
-                  setEcgTime(null);
-                }
-              })
-              .catch(() => {
-                if (mounted) {
-                  setEcgHR(null);
-                  setEcgTime(null);
-                }
-              });
+          // ECG latest
+          withingsECG(access, undefined, undefined, "Europe/Rome", 1)
+            .then((e) => {
+              if (!mounted) return;
+              if (e?.latest) {
+                setEcgHR(e.latest.heart_rate ?? null);
+                setEcgTime(e.latest.time_iso ?? null);
+              } else {
+                setEcgHR(null);
+                setEcgTime(null);
+              }
+            })
+            .finally(() => setLoad("ecg", false));
 
-            // SpO2
-            withingsSpO2(access)
-              .then((s) => {
-                if (!mounted) return;
-                setSpo2(s?.latest?.percent ?? null);
-                setSpo2UpdatedAt(s?.latest?.ts ?? null);
-              })
-              .catch(() => {
-                if (mounted) {
-                  setSpo2(null);
-                  setSpo2UpdatedAt(null);
-                }
-              });
+          // SpO2
+          withingsSpO2(access)
+            .then((s) => {
+              if (!mounted) return;
+              setSpo2(s?.latest?.percent ?? null);
+              setSpo2UpdatedAt(s?.latest?.ts ?? null);
+            })
+            .finally(() => setLoad("spo2", false));
 
-            // Temperature
-            withingsTemperature(access, todayStr, todayStr)
-              .then((t) => {
-                if (!mounted) return;
-                const item = t?.latest;
-                const skin = item?.skin_c ?? null;
-                const body = item?.body_c ?? null;
-                setTempVar(body ?? skin ?? null);
-                setTempUpdatedAt(item?.ts ?? null);
-              })
-              .catch(() => {
-                if (mounted) {
-                  setTempVar(null);
-                  setTempUpdatedAt(null);
-                }
-              });
-
-            // Heart rate daily (avg/min/max)
+          // Heart rate daily (avg/min/max)
+          (async () => {
             try {
               let daily = await withingsHeartRateDaily(access, todayStr);
               let dateUsed = todayStr;
@@ -452,39 +512,32 @@ export default function Dashboard() {
                 setHrUpdatedAt(daily?.updatedAt ?? null);
                 setHeartRateDate(dateUsed);
               }
-            } catch {
-              if (mounted) {
-                setAvgHR(null);
-                setMaxHR(null);
-                setMinHR(null);
-                setHrUpdatedAt(null);
-              }
+            } finally {
+              setLoad("avgHR", false);
+              setLoad("maxHR", false);
+              setLoad("minHR", false);
             }
-          } catch {
-            if (!mounted) return;
-            setWeight(null);
-            setRestingHR(null);
-            setSteps(null);
-            setCalories(null);
-            setSleepHours(null);
-            setSpo2(null);
-            setTempVar(null);
-          }
+          })();
 
           if (mounted) {
             setInfo(null);
             setHrv(null);
+            setLoad("hrv", false);
           }
         }
       } catch (e: any) {
         if (!mounted) return;
         setErr(e?.message ?? "Failed to load data");
+        // End all spinners on error
+        setLoading(
+          (m) =>
+            Object.fromEntries(Object.keys(m).map((k) => [k, false])) as any
+        );
       }
     })();
 
     return () => {
       mounted = false;
-      ac.abort();
     };
   }, [provider, getAccessToken]);
 
@@ -498,6 +551,14 @@ export default function Dashboard() {
 
   const tempLabel =
     provider === "withings" ? "Body Temperature" : "Skin Temperature Variation";
+
+  // compute date labels for SpO2 & Temp
+  const spo2DateIso = spo2UpdatedAt
+    ? new Date(spo2UpdatedAt * 1000).toISOString().slice(0, 10)
+    : null;
+  const tempDateIso = tempUpdatedAt
+    ? new Date(tempUpdatedAt * 1000).toISOString().slice(0, 10)
+    : null;
 
   if (err) {
     return (
@@ -538,6 +599,7 @@ export default function Dashboard() {
             unit="kg"
             foot="Latest"
             to="/metrics/weight"
+            loading={loading.weight}
           />
 
           <StatCard
@@ -545,17 +607,19 @@ export default function Dashboard() {
             icon={<Activity className="h-4 w-4" />}
             value={distance != null ? Number(distance).toFixed(2) : "—"}
             unit="km"
-            foot={labelFor(distanceDate)} // show date or "today" here
+            foot={labelFor(distanceDate)}
             to="/metrics/distance"
+            loading={loading.distance}
           />
 
           <StatCard
             title="Steps"
             icon={<TrendingUp className="h-4 w-4" />}
             value={steps ?? "—"}
-            unit={labelFor(stepsDate)} // today or e.g. "27 Oct"
+            unit={labelFor(stepsDate)}
             pulse
             to="/metrics/steps"
+            loading={loading.steps}
           />
 
           {provider === "fitbit" ? (
@@ -565,41 +629,43 @@ export default function Dashboard() {
                 icon={<Watch className="h-4 w-4" />}
                 value={fmtHMFromHours(sleepHours)}
                 to="/metrics/sleep"
+                loading={loading.sleep}
               />
               <StatCard
                 title="Calories"
                 icon={<Activity className="h-4 w-4" />}
                 value={calories ?? "—"}
-                unit={labelFor(caloriesDate)} // today or date
+                unit={labelFor(caloriesDate)}
                 to="/metrics/calories"
+                loading={loading.calories}
               />
             </>
           ) : null}
 
-          {provider === "withings" ? (
-            <StatCard
-              title="Oxygen Saturation (SpO₂)"
-              icon={<Droplets className="h-4 w-4" />}
-              value={fmtNumber(spo2, 1)}
-              unit={spo2UpdatedAt ? `% • ${fmtTimeHM(spo2UpdatedAt)}` : "%"}
-              to="/metrics/spo2"
-            />
-          ) : (
-            <StatCard
-              title="Blood Oxygen (SpO₂)"
-              icon={<Droplets className="h-4 w-4" />}
-              value={fmtNumber(spo2, 1)}
-              unit="%"
-              to="/metrics/spo2"
-            />
-          )}
+          {/* SpO2 with date in foot */}
+          <StatCard
+            title={
+              provider === "withings"
+                ? "Oxygen Saturation (SpO₂)"
+                : "Blood Oxygen (SpO₂)"
+            }
+            icon={<Droplets className="h-4 w-4" />}
+            value={fmtNumber(spo2, 1)}
+            unit="%"
+            foot={labelFor(spo2DateIso)}
+            to="/metrics/spo2"
+            loading={loading.spo2}
+          />
 
+          {/* Temperature with date in foot */}
           <StatCard
             title={tempLabel}
             icon={<Thermometer className="h-4 w-4" />}
             value={fmtNumber(tempVar, 1)}
-            unit={tempUpdatedAt ? `°C • ${fmtTimeHM(tempUpdatedAt)}` : "°C"}
+            unit="°C"
+            foot={labelFor(tempDateIso)}
             to="/metrics/temperature"
+            loading={loading.temperature}
           />
 
           {provider === "withings" ? (
@@ -609,42 +675,27 @@ export default function Dashboard() {
                 icon={<HeartPulse className="h-4 w-4" />}
                 value={avgHR != null ? Math.round(avgHR) : "—"}
                 unit="bpm"
-                foot={
-                  !heartRateDate
-                    ? undefined
-                    : isToday(heartRateDate)
-                    ? "Today"
-                    : shortDay(heartRateDate)
-                }
+                foot={labelFor(heartRateDate ?? undefined)}
                 to="/metrics/heart-rate"
+                loading={loading.avgHR}
               />
               <StatCard
                 title="Max Heart Rate"
                 icon={<HeartPulse className="h-4 w-4" />}
                 value={maxHR != null ? Math.round(maxHR) : "—"}
                 unit="bpm"
-                foot={
-                  !heartRateDate
-                    ? undefined
-                    : isToday(heartRateDate)
-                    ? "Today"
-                    : shortDay(heartRateDate)
-                }
+                foot={labelFor(heartRateDate ?? undefined)}
                 to="/metrics/heart-rate"
+                loading={loading.maxHR}
               />
               <StatCard
                 title="Min Heart Rate"
                 icon={<HeartPulse className="h-4 w-4" />}
                 value={minHR != null ? Math.round(minHR) : "—"}
                 unit="bpm"
-                foot={
-                  !heartRateDate
-                    ? undefined
-                    : isToday(heartRateDate)
-                    ? "Today"
-                    : shortDay(heartRateDate)
-                }
+                foot={labelFor(heartRateDate ?? undefined)}
                 to="/metrics/heart-rate"
+                loading={loading.minHR}
               />
             </>
           ) : (
@@ -655,6 +706,7 @@ export default function Dashboard() {
                 value={restingHR ?? "—"}
                 unit="bpm"
                 to="/metrics/heart-rate"
+                loading={loading.restingHR}
               />
               <StatCard
                 title="Heart Rate Variability (HRV)"
@@ -662,6 +714,7 @@ export default function Dashboard() {
                 value={hrv ?? "—"}
                 unit="ms"
                 to="/metrics/hrv"
+                loading={loading.hrv}
               />
             </>
           )}
@@ -680,6 +733,7 @@ export default function Dashboard() {
                   : "bpm"
               }
               to="/metrics/ecg"
+              loading={loading.ecg}
             />
           )}
         </section>

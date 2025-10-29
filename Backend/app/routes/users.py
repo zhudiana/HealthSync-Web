@@ -39,6 +39,13 @@ def update_user_by_auth(
     if payload.email is not None:
         user.email = payload.email
 
+    # Handle heart rate thresholds
+    if payload.hr_threshold_low is not None:
+        user.hr_threshold_low = payload.hr_threshold_low
+    
+    if payload.hr_threshold_high is not None:
+        user.hr_threshold_high = payload.hr_threshold_high
+
     db.add(user)
     db.commit()
     db.refresh(user)

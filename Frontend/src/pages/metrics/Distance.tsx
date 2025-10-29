@@ -32,7 +32,7 @@ interface DistancePoint {
 
 // --------------------- main ---------------------
 export default function Distance() {
-  const [range, setRange] = useState<"7d" | "30d" | "90d">("30d");
+  const [range, setRange] = useState<"7d" | "14d" | "30d">("14d");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [series, setSeries] = useState<DistancePoint[]>([]);
@@ -42,8 +42,8 @@ export default function Distance() {
     const to = new Date();
     const from = new Date();
     if (range === "7d") from.setDate(to.getDate() - 6);
+    if (range === "14d") from.setDate(to.getDate() - 13);
     if (range === "30d") from.setDate(to.getDate() - 29);
-    if (range === "90d") from.setDate(to.getDate() - 89);
     return {
       dateFrom: formatDate(from),
       dateTo: formatDate(to),
@@ -129,13 +129,13 @@ export default function Distance() {
           <div className="flex items-center gap-2">
             <select
               value={range}
-              onChange={(e) => setRange(e.target.value as "7d" | "30d" | "90d")}
+              onChange={(e) => setRange(e.target.value as "7d" | "14d" | "30d")}
               className="rounded-md bg-zinc-900 border border-zinc-700 px-2 py-1 text-sm"
               aria-label="Select date range"
             >
               <option value="7d">Last 7 days</option>
+              <option value="14d">Last 14 days</option>
               <option value="30d">Last 30 days</option>
-              <option value="90d">Last 90 days</option>
             </select>
 
             <button

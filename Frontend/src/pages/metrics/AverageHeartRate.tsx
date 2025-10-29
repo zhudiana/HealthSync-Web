@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
-import { RefreshCw, ChevronLeft } from "lucide-react";
+import { RefreshCw, ChevronLeft, Loader2, Heart } from "lucide-react";
+import HrThresholdDialog from "@/components/HeartRateThresholdDialog";
 import {
   Area,
   AreaChart,
@@ -12,7 +13,13 @@ import {
   CartesianGrid,
 } from "recharts";
 import { tokens } from "@/lib/storage";
-import { withingsHeartRateDaily } from "@/lib/api";
+import {
+  withingsHeartRateDaily,
+  updateUserByAuth,
+  getUserByAuth,
+} from "@/lib/api";
+
+const API_BASE_URL = import.meta.env.VITE_API_URL;
 
 // --------------------- helpers ---------------------
 function fmt(n: number | null | undefined) {
@@ -36,7 +43,9 @@ function HeartRateChart({
   if (loading) {
     return (
       <div className="flex h-96 items-center justify-center text-neutral-400">
-        Loading chart…
+        <div className="flex items-center gap-2">
+          <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+        </div>
       </div>
     );
   }
@@ -146,6 +155,14 @@ export default function AverageHeartRate() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [series, setSeries] = useState<HeartRatePoint[]>([]);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [thresholds, setThresholds] = useState<{
+    low: number | null;
+    high: number | null;
+  }>({
+    low: null,
+    high: null,
+  });
 
   // compute date range
   const { dateFrom, dateTo } = useMemo(() => {
@@ -176,7 +193,26 @@ export default function AverageHeartRate() {
 
       while (currentDate <= endDate) {
         const dateStr = formatDate(currentDate);
-        const data = await withingsHeartRateDaily(accessToken, dateStr);
+
+        // Try to get cached data first
+        let data;
+        try {
+          const cachedData = await fetch(
+            `${API_BASE_URL}/withings/metrics/heart-rate/daily/cached/${dateStr}?access_token=${encodeURIComponent(
+              accessToken
+            )}`
+          );
+
+          if (cachedData.ok) {
+            data = await cachedData.json();
+          } else {
+            // If no cached data (404) or other error, fall back to regular endpoint
+            data = await withingsHeartRateDaily(accessToken, dateStr);
+          }
+        } catch (e) {
+          // If cache attempt fails, fall back to regular endpoint
+          data = await withingsHeartRateDaily(accessToken, dateStr);
+        }
 
         if (data && data.hr_average !== null) {
           dailyData.push({
@@ -204,6 +240,30 @@ export default function AverageHeartRate() {
   useEffect(() => {
     load();
   }, [range, dateFrom, dateTo]);
+
+  // Load initial thresholds
+  useEffect(() => {
+    async function loadThresholds() {
+      try {
+        const authUserId = localStorage.getItem("authUserId");
+        if (!authUserId) return;
+
+        const user = await getUserByAuth(authUserId);
+        if (
+          user.hr_threshold_low !== undefined ||
+          user.hr_threshold_high !== undefined
+        ) {
+          setThresholds({
+            low: user.hr_threshold_low,
+            high: user.hr_threshold_high,
+          });
+        }
+      } catch (error) {
+        console.error("Failed to load thresholds:", error);
+      }
+    }
+    loadThresholds();
+  }, []);
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
@@ -241,6 +301,14 @@ export default function AverageHeartRate() {
             </select>
 
             <button
+              onClick={() => setDialogOpen(true)}
+              className="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-md border border-zinc-700 hover:bg-zinc-800 text-zinc-200"
+            >
+              <Heart className="h-4 w-4" />
+              Adjust Thrushold
+            </button>
+
+            <button
               onClick={() => load()}
               disabled={loading}
               className="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-md border border-zinc-700 hover:bg-zinc-800 text-zinc-200"
@@ -250,6 +318,47 @@ export default function AverageHeartRate() {
               />
               Refresh
             </button>
+
+            <HrThresholdDialog
+              open={dialogOpen}
+              onOpenChange={setDialogOpen}
+              initialLow={thresholds.low}
+              initialHigh={thresholds.high}
+              onSave={async ({ low, high }) => {
+                try {
+                  console.log("Saving thresholds:", { low, high });
+                  const authUserId = localStorage.getItem("authUserId");
+                  if (!authUserId) throw new Error("Not authenticated");
+
+                  const response = await updateUserByAuth(authUserId, {
+                    hr_threshold_low: low,
+                    hr_threshold_high: high,
+                  });
+                  console.log("Save response:", response);
+
+                  // Verify the response has the expected properties
+                  if (
+                    "hr_threshold_low" in response &&
+                    "hr_threshold_high" in response
+                  ) {
+                    setThresholds({
+                      low: response.hr_threshold_low as number | null,
+                      high: response.hr_threshold_high as number | null,
+                    });
+                  } else {
+                    console.warn(
+                      "Response missing threshold values:",
+                      response
+                    );
+                    // Fall back to the values we tried to save
+                    setThresholds({ low, high });
+                  }
+                } catch (error) {
+                  console.error("Failed to save thresholds:", error);
+                  throw error; // Re-throw to let the dialog handle the error
+                }
+              }}
+            />
           </div>
         </div>
 
@@ -271,68 +380,69 @@ export default function AverageHeartRate() {
 
             {/* Data table */}
             {series.length > 0 && (
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="bg-card rounded-xl p-6"
-              >
-                <div className="overflow-x-auto">
-                  <table className="w-full border-collapse">
-                    <thead>
-                      <tr className="border-b border-zinc-800">
-                        <th className="py-2 px-4 text-left text-zinc-400 font-medium">
-                          Date
-                        </th>
-                        <th className="py-2 px-4 text-right text-zinc-400 font-medium">
-                          Average BPM
-                        </th>
-                        <th className="py-2 px-4 text-right text-zinc-400 font-medium">
-                          Min BPM
-                        </th>
-                        <th className="py-2 px-4 text-right text-zinc-400 font-medium">
-                          Max BPM
-                        </th>
-                        <th className="py-2 px-4 text-left text-zinc-400 font-medium">
-                          Status
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-800">
-                      {series.map((point) => {
-                        const avgValue = point.avg_bpm;
-                        let status = "Normal";
-                        let statusColor = "text-green-400";
+              <div className="overflow-hidden rounded-xl border border-zinc-800">
+                <table className="min-w-full divide-y divide-zinc-800">
+                  <thead className="bg-zinc-900/60">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                        Date
+                      </th>
+                      <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                        Avg&nbsp;(bpm)
+                      </th>
+                      <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                        Min&nbsp;(bpm)
+                      </th>
+                      <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                        Max&nbsp;(bpm)
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                        Status
+                      </th>
+                    </tr>
+                  </thead>
 
-                        if (avgValue > 100) {
+                  <tbody className="divide-y divide-zinc-800 bg-zinc-950/40">
+                    {series
+                      .slice()
+                      .reverse()
+                      .map((p) => {
+                        const avg = p.avg_bpm ?? null;
+                        let status = "Normal";
+                        let statusClass = "text-emerald-400";
+                        if (avg !== null && avg > 100) {
                           status = "High";
-                          statusColor = "text-red-400";
-                        } else if (avgValue < 60) {
+                          statusClass = "text-red-400";
+                        } else if (avg !== null && avg < 60) {
                           status = "Low";
-                          statusColor = "text-yellow-400";
+                          statusClass = "text-yellow-400";
                         }
 
                         return (
-                          <tr key={point.date} className="hover:bg-zinc-900/50">
-                            <td className="py-2 px-4">{point.date}</td>
-                            <td className="py-2 px-4 text-right">
-                              {fmt(point.avg_bpm)}
+                          <tr key={p.date} className="hover:bg-zinc-900/40">
+                            <td className="whitespace-nowrap px-4 py-3 text-sm text-zinc-200">
+                              {formatDate(p.date)}
                             </td>
-                            <td className="py-2 px-4 text-right">
-                              {fmt(point.min_bpm)}
+                            <td className="whitespace-nowrap px-4 py-3 text-sm text-zinc-100 text-right">
+                              {fmt(p.avg_bpm)}
                             </td>
-                            <td className="py-2 px-4 text-right">
-                              {fmt(point.max_bpm)}
+                            <td className="whitespace-nowrap px-4 py-3 text-sm text-zinc-100 text-right">
+                              {fmt(p.min_bpm)}
                             </td>
-                            <td className={`py-2 px-4 ${statusColor}`}>
+                            <td className="whitespace-nowrap px-4 py-3 text-sm text-zinc-100 text-right">
+                              {fmt(p.max_bpm)}
+                            </td>
+                            <td
+                              className={`whitespace-nowrap px-4 py-3 text-sm ${statusClass}`}
+                            >
                               {status}
                             </td>
                           </tr>
                         );
                       })}
-                    </tbody>
-                  </table>
-                </div>
-              </motion.div>
+                  </tbody>
+                </table>
+              </div>
             )}
           </>
         )}

@@ -4,7 +4,11 @@ import { Link } from "react-router-dom";
 import { RefreshCw, ChevronLeft, Scale, TrendingUp, Ruler } from "lucide-react";
 import Header from "@/components/Header";
 import { tokens } from "@/lib/storage";
-import { withingsWeightLatest, withingsWeightHistory } from "@/lib/api";
+import {
+  withingsWeightLatest,
+  withingsWeightHistory,
+  withingsWeightHistoryCached,
+} from "@/lib/api";
 
 // --------------------- helpers ---------------------
 const KG_IN_LB = 2.2046226218;
@@ -54,38 +58,45 @@ export default function Weights() {
   async function load() {
     setLoading(true);
     setError(null);
+    // inside load()
     try {
       const accessToken = tokens.getAccess("withings");
       if (!accessToken)
         throw new Error("No Withings session found. Please connect Withings.");
 
-      // 1) History in [dateFrom, dateTo]
-      console.log("Fetching weight history for dates:", dateFrom, dateTo);
-      const hist = await withingsWeightHistory(accessToken, dateFrom, dateTo);
-      console.log("Raw history response:", JSON.stringify(hist, null, 2));
+      // --- try cache first ---
+      console.log("Trying cached weight history:", dateFrom, dateTo);
+      const cached = await withingsWeightHistoryCached(
+        accessToken,
+        dateFrom,
+        dateTo
+      );
+
+      // choose data source: cached (if present) else live
+      const hist =
+        cached && Array.isArray(cached.items) && cached.items.length > 0
+          ? cached
+          : await withingsWeightHistory(accessToken, dateFrom, dateTo);
+
+      console.log(
+        `Using ${cached ? "CACHED" : "LIVE"} weight history`,
+        JSON.stringify(hist, null, 2)
+      );
 
       const daily: WeightPoint[] = (hist.items || [])
         .map((it) => {
-          console.log("Processing data point:", it);
-          if (!it.ts || !it.weight_kg) {
-            console.log("Skipping invalid data point:", it);
-            return null;
-          }
-          const point = {
-            date: new Date(it.ts * 1000).toISOString().slice(0, 10), // Convert Unix timestamp to YYYY-MM-DD
+          if (!it.ts || it.weight_kg == null) return null;
+          return {
+            date: new Date(it.ts * 1000).toISOString().slice(0, 10),
             weight_kg: it.weight_kg,
           };
-          console.log("Created point:", point);
-          return point;
         })
-        .filter((x): x is WeightPoint => x !== null);
+        .filter((x): x is WeightPoint => x !== null)
+        .sort((a, b) => a.date.localeCompare(b.date));
 
-      console.log("Processed points before sort:", daily);
-      daily.sort((a, b) => a.date.localeCompare(b.date));
-      console.log("Final sorted points:", daily);
       setSeries(daily);
 
-      // 2) Latest single datapoint
+      // latest datapoint as before
       const latestRow = await withingsWeightLatest(accessToken);
       if (latestRow && latestRow.value != null && latestRow.latest_date) {
         setLatest({

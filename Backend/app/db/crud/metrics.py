@@ -1,5 +1,5 @@
 from __future__ import annotations
-from datetime import datetime
+from datetime import datetime, date, time
 from sqlalchemy.orm import Session
 from sqlalchemy.dialects.postgresql import insert
 from app.db.models.steps import StepsDaily, StepsIntraday
@@ -473,5 +473,57 @@ def _update_snapshot_temperature(
     )
     db.execute(stmt)
 
+
+def get_weight_history(db: Session, user_id: str, provider: str, start_date: date, end_date: date):
+    """
+    Retrieve weight history from database for given date range.
+    Returns list of dicts with { ts: int, weight_kg: float, device?: str }
+    """
+    query = (
+        db.query(WeightReading)
+        .filter(
+            WeightReading.user_id == user_id,
+            WeightReading.provider == provider,
+            WeightReading.measured_at_utc >= datetime.combine(start_date, time.min).replace(tzinfo=ZoneInfo("UTC")),
+            WeightReading.measured_at_utc <= datetime.combine(end_date, time.max).replace(tzinfo=ZoneInfo("UTC"))
+        )
+        .order_by(WeightReading.measured_at_utc.asc())
+    )
+    
+    items = []
+    for reading in query.all():
+        items.append({
+            "ts": int(reading.measured_at_utc.timestamp()),
+            "weight_kg": reading.weight_kg,
+            "device": reading.device
+        })
+    
+    return items
+
+def get_heart_rate_daily(db: Session, user_id: str, provider: str, date_local: date) -> dict | None:
+    """
+    Retrieve heart rate data from database for a specific date.
+    Returns dict with { date, hr_average, hr_min, hr_max } or None if not found
+    """
+    # Query the HeartRateDaily table for the specific date
+    record = (
+        db.query(HeartRateDaily)
+        .filter(
+            HeartRateDaily.user_id == user_id,
+            HeartRateDaily.provider == provider,
+            HeartRateDaily.date_local == date_local
+        )
+        .first()
+    )
+    
+    if not record:
+        return None
+        
+    return {
+        "date": date_local.isoformat(),
+        "hr_average": record.avg_bpm,
+        "hr_min": record.min_bpm,
+        "hr_max": record.max_bpm
+    }
 
 

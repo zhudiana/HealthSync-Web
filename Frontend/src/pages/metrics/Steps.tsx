@@ -1,12 +1,12 @@
 // src/pages/metrics/Steps.tsx
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, RefreshCw } from "lucide-react";
 import { Link } from "react-router-dom";
+import { ArrowLeft, RefreshCw } from "lucide-react";
 
 import { withingsStepsRange } from "@/lib/api";
 import { tokens } from "@/lib/storage";
 
-// 👉 add recharts
+// recharts
 import {
   ResponsiveContainer,
   AreaChart,
@@ -20,9 +20,9 @@ import {
 // --- tiny UI helpers ---
 function StatCard({ title, value }: { title: string; value: string | number }) {
   return (
-    <div className="rounded-2xl bg-neutral-900/60 px-5 py-6 shadow-lg ring-1 ring-black/5">
-      <div className="text-neutral-400 text-sm">{title}</div>
-      <div className="mt-2 text-3xl font-semibold text-neutral-50">{value}</div>
+    <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+      <div className="text-sm text-zinc-400">{title}</div>
+      <div className="mt-1 text-2xl font-semibold text-zinc-100">{value}</div>
     </div>
   );
 }
@@ -49,12 +49,14 @@ export default function StepsPage() {
   const { startYmd, endYmd, label } = useMemo(() => {
     const end = new Date(); // today
     const start = new Date();
-    start.setDate(end.getDate() - preset); // include one more day for full range
+    // include the last 'preset' days (like Weights page style)
+    // e.g., preset=14 -> last 14 days inclusive
+    start.setDate(end.getDate() - (preset - 1));
     const fmt = (d: Date) => d.toISOString().slice(0, 10);
     return {
       startYmd: fmt(start),
       endYmd: fmt(end),
-      label: `Withings · ${fmt(start)} ⇒ ${fmt(end)}`,
+      label: `Withings · ${fmt(start)} → ${fmt(end)}`,
     };
   }, [preset]);
 
@@ -103,135 +105,156 @@ export default function StepsPage() {
 
   // ---------------- UI ----------------
   return (
-    <div className="mx-auto max-w-6xl px-4 py-6">
-      {/* header */}
-      <div className="mb-4 flex items-center gap-3">
-        <Link
-          to="/dashboard"
-          className="inline-flex items-center rounded-xl bg-neutral-900/60 px-3 py-2 text-neutral-200 ring-1 ring-black/5 hover:bg-neutral-800"
-        >
-          <ArrowLeft className="mr-2 h-4 w-4" />
-          Back
-        </Link>
-        <h1 className="ml-2 text-xl font-semibold text-neutral-50">
-          Steps Analytics
-        </h1>
-        <div className="ml-3 text-sm text-neutral-400">{label}</div>
-        <div className="ml-auto flex items-center gap-2">
-          <select
-            className="rounded-xl bg-neutral-900/60 px-3 py-2 text-neutral-200 ring-1 ring-black/5"
-            value={preset}
-            onChange={(e) => setPreset(Number(e.target.value) as Preset)}
-          >
-            <option value={7}>Last 7 days</option>
-            <option value={14}>Last 14 days</option>
-            <option value={30}>Last 30 days</option>
-          </select>
-          <button
-            onClick={loadSteps}
-            className="inline-flex items-center rounded-xl bg-neutral-900/60 px-3 py-2 text-neutral-200 ring-1 ring-black/5 hover:bg-neutral-800 disabled:opacity-50"
-            disabled={loading}
-            title="Refresh"
-          >
-            <RefreshCw
-              className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`}
-            />
-            Refresh
-          </button>
-        </div>
-      </div>
+    <div className="min-h-screen bg-zinc-950 text-zinc-100">
+      <main className="max-w-5xl mx-auto p-4 md:p-8 space-y-8">
+        {/* Top bar with Back — mirrors Weights.tsx */}
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <Link
+              to="/dashboard"
+              aria-label="Back to dashboard"
+              className="inline-flex items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900/60 p-2 hover:bg-zinc-900 transition"
+            >
+              <ArrowLeft className="h-5 w-5" />
+            </Link>
+            <div>
+              <h2 className="text-2xl font-bold tracking-tight">
+                Steps Analytics
+              </h2>
+              <p className="text-zinc-400">{label}</p>
+            </div>
+          </div>
 
-      {/* stat cards */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <StatCard title="Total steps" value={totalSteps} />
-        <StatCard title="Daily average" value={dailyAverage} />
-      </div>
+          <div className="flex items-center gap-2">
+            <select
+              className="rounded-md bg-zinc-900 border border-zinc-700 px-2 py-1 text-sm"
+              value={preset}
+              onChange={(e) => setPreset(Number(e.target.value) as Preset)}
+            >
+              <option value={7}>Last 7 days</option>
+              <option value={14}>Last 14 days</option>
+              <option value={30}>Last 30 days</option>
+            </select>
 
-      {/* chart */}
-      <div className="mt-6 rounded-2xl bg-neutral-900/60 p-4 ring-1 ring-black/5">
-        <div className="mb-2 text-sm font-medium text-neutral-300">
-          Daily steps
+            <button
+              onClick={loadSteps}
+              disabled={loading}
+              className="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-md border border-zinc-700 hover:bg-zinc-800 text-zinc-200"
+            >
+              <RefreshCw
+                className={`h-4 w-4 ${loading ? "animate-spin" : ""}`}
+              />
+              Refresh
+            </button>
+          </div>
         </div>
-        <div className="h-72 w-full">
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={series}>
-              <defs>
-                <linearGradient id="gSteps" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopOpacity={0.35} />
-                  <stop offset="95%" stopOpacity={0.05} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeOpacity={0.08} vertical={false} />
-              <XAxis
-                dataKey="date"
-                tick={{ fill: "#a3a3a3", fontSize: 12 }}
-                tickMargin={8}
-              />
-              <YAxis
-                tick={{ fill: "#a3a3a3", fontSize: 12 }}
-                tickMargin={6}
-                allowDecimals={false}
-              />
-              <Tooltip
-                contentStyle={{
-                  background: "#0a0a0a",
-                  border: "1px solid rgba(0,0,0,0.3)",
-                  borderRadius: "0.75rem",
-                }}
-                labelStyle={{ color: "#e5e5e5" }}
-                itemStyle={{ color: "#e5e5e5" }}
-              />
-              <Area
-                type="monotone"
-                dataKey="steps"
-                strokeOpacity={0.9}
-                fillOpacity={1}
-                fill="url(#gSteps)"
-              />
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
 
-      {/* error */}
-      {error && (
-        <div className="mt-6 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-red-300">
-          Error: {error}
-        </div>
-      )}
+        {/* Error */}
+        {error && (
+          <div className="mb-4 rounded-lg border border-red-900/40 bg-red-950/40 px-3 py-2 text-sm text-red-200">
+            {error}
+          </div>
+        )}
 
-      {/* simple series list (optional) */}
-      <div className="mt-6 rounded-2xl bg-neutral-900/60 p-4 ring-1 ring-black/5">
-        <div className="mb-2 text-sm font-medium text-neutral-300">
-          Daily series
+        {/* Stats grid — same cards as Weights.tsx */}
+        <div className="grid grid-cols-2 gap-3">
+          <StatCard title="Total steps" value={totalSteps.toLocaleString()} />
+          <StatCard
+            title="Daily average"
+            value={dailyAverage.toLocaleString()}
+          />
         </div>
-        <div className="max-h-72 overflow-auto text-sm text-neutral-400">
-          {series.length === 0 ? (
-            <div className="py-6 text-neutral-500">
-              {loading ? "Loading…" : "No data"}
+
+        {/* Chart — same visual language as Weights.tsx */}
+        <div className="h-80 w-full rounded-xl border border-zinc-800 bg-zinc-900/60 p-2">
+          {loading ? (
+            <div className="h-full flex flex-col items-center justify-center gap-3 text-zinc-400">
+              <RefreshCw className="h-6 w-6 animate-spin" />
+              <span>Loading data...</span>
+            </div>
+          ) : !series.length ? (
+            <div className="grid place-items-center h-full text-zinc-400">
+              No data for this range.
             </div>
           ) : (
-            <table className="w-full table-fixed">
-              <thead className="text-neutral-500">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={series}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
+                <XAxis dataKey="date" stroke="#a1a1aa" />
+                <YAxis stroke="#a1a1aa" allowDecimals={false} />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: "#18181b",
+                    border: "1px solid #3f3f46",
+                    borderRadius: 8,
+                  }}
+                  labelStyle={{ color: "#fafafa" }}
+                  formatter={(value: any) => [
+                    `${
+                      typeof value === "number" ? value.toLocaleString() : value
+                    } steps`,
+                    "Steps",
+                  ]}
+                  labelFormatter={(l) => `Date: ${l}`}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="steps"
+                  stroke="#3b82f6"
+                  fill="url(#stepsGradient)"
+                  strokeWidth={2}
+                  dot={false}
+                  activeDot={{ r: 4 }}
+                />
+                <defs>
+                  <linearGradient
+                    id="stepsGradient"
+                    x1="0"
+                    y1="0"
+                    x2="0"
+                    y2="1"
+                  >
+                    <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
+                    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0.02} />
+                  </linearGradient>
+                </defs>
+              </AreaChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+
+        {/* Series table — same table style as Weights.tsx */}
+        {series.length > 0 && (
+          <div className="overflow-hidden rounded-xl border border-zinc-800">
+            <table className="min-w-full divide-y divide-zinc-800">
+              <thead className="bg-zinc-900/60">
                 <tr>
-                  <th className="w-40 text-left font-normal">Date</th>
-                  <th className="text-left font-normal">Steps</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                    Date
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                    Steps
+                  </th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-zinc-800 bg-zinc-950/40">
                 {[...series]
                   .sort((a, b) => b.date.localeCompare(a.date))
-                  .map((r) => (
-                    <tr key={r.date} className="border-t border-neutral-800">
-                      <td className="py-2">{r.date}</td>
-                      <td className="py-2">{r.steps}</td>
+                  .map((row) => (
+                    <tr key={row.date} className="hover:bg-zinc-900/40">
+                      <td className="whitespace-nowrap px-4 py-3 text-sm text-zinc-200">
+                        {row.date}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-sm text-zinc-100">
+                        {row.steps.toLocaleString()}
+                      </td>
                     </tr>
                   ))}
               </tbody>
             </table>
-          )}
-        </div>
-      </div>
+          </div>
+        )}
+      </main>
     </div>
   );
 }
