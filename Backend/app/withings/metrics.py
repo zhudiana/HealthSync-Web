@@ -26,8 +26,9 @@ from app.db.crud.metrics import (
     _upsert_weight_reading
     )
 import logging
-logger = logging.getLogger("uvicorn.error")  # integrates with Uvicorn
 
+
+logger = logging.getLogger("uvicorn.error") 
 
 router = APIRouter(tags=["Withings Metrics"], prefix="/withings/metrics")
 
@@ -69,7 +70,7 @@ def _resolve_user_and_tz(db: Session, access_token: str) -> tuple[User, str]:
     """
     # 1) scan accounts and compare decrypted token
     acc = None
-    # only pull columns we need for speed
+    
     rows = db.query(
         WithingsAccount.id,
         WithingsAccount.user_id,
@@ -82,11 +83,9 @@ def _resolve_user_and_tz(db: Session, access_token: str) -> tuple[User, str]:
             if row.access_token:
                 plain = decrypt_text(row.access_token)
                 if plain == access_token:
-                    # re-load full model only when matched
                     acc = db.query(WithingsAccount).filter(WithingsAccount.id == row.id).first()
                     break
         except Exception:
-            # ignore decrypt errors and keep searching
             continue
 
     if not acc:
@@ -164,7 +163,6 @@ def daily_metrics(
     fallback_days: int = Query(3, ge=0, le=14, description="Look back if empty"),
     debug: int = Query(0, description="Set 1 to include raw payloads"),
     db: Session = Depends(get_db),
-    # app_user: User | None = Depends(get_current_user_optional),
 ):
     """
     Withings daily snapshot:
@@ -432,7 +430,7 @@ def overview(access_token: str):
     Minimal snapshot: latest weight (kg) and resting heart rate (bpm).
     """
     headers = _auth(access_token)
-    # 1=weight, 11=HR; category=1 = real measurements
+
     j = _post(MEASURE_URL, headers, {"action":"getmeas","meastype":"1,11","category":1})
     if not j:
         return {"weightKg": None, "restingHeartRate": None}
@@ -456,7 +454,6 @@ def overview(access_token: str):
 @router.get("/weight/latest")
 def weight_latest(access_token: str, lookback_days: int = Query(90, ge=1, le=365),
                   db: Session = Depends(get_db),
-                #   app_user: User | None = Depends(get_current_user_optional)
                   ):
     """
     Latest weight (kg) within lookback window. Also persists the reading + updates snapshot.
@@ -475,7 +472,8 @@ def weight_latest(access_token: str, lookback_days: int = Query(90, ge=1, le=365
         ts = g.get("date", -1)
         for m in g.get("measures", []):
             if m.get("type") == 1:
-                v = m.get("value"); u = m.get("unit", 0)
+                v = m.get("value")
+                u = m.get("unit", 0)
                 val = v * (10 ** u) if isinstance(v,(int,float)) and isinstance(u,(int,float)) else None
                 if val is not None and ts > latest_ts:
                     latest_ts = ts
@@ -527,44 +525,6 @@ def weight_latest(access_token: str, lookback_days: int = Query(90, ge=1, le=365
     }
 
 
-@router.get("/weight/history/cached")
-def weight_history_cached(
-    access_token: str,
-    start: str = Query(..., description="YYYY-MM-DD"),
-    end: str = Query(..., description="YYYY-MM-DD"),
-    db: Session = Depends(get_db),
-):
-    """Try to get weight history data from cache first. If not available, returns 404."""
-    try:
-        user, _tz = _resolve_user_and_tz(db, access_token)
-        
-        # Convert dates
-        try:
-            start_date = datetime.strptime(start, "%Y-%m-%d").date()
-            end_date = datetime.strptime(end, "%Y-%m-%d").date()
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
-
-        from app.db.crud.metrics import get_weight_history
-        items = get_weight_history(db, user.id, "withings", start_date, end_date)
-        
-        if not items:
-            raise HTTPException(status_code=404, detail="No cached weight data found for this date range")
-        
-        return {
-            "start": start,
-            "end": end,
-            "items": items,
-            "fromCache": True
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.warning(f"Failed to fetch cached weight data: {e}")
-        raise HTTPException(status_code=500, detail="Failed to fetch cached data")
-
-
 
 @router.get("/weight/history")
 def weight_history(
@@ -572,7 +532,6 @@ def weight_history(
     start: str = Query(..., description="YYYY-MM-DD"),
     end: str   = Query(..., description="YYYY-MM-DD"),
     db: Session = Depends(get_db),
-    # app_user: User | None = Depends(get_current_user_optional),
 ):
     headers = _auth(access_token)
     j = _post(MEASURE_URL, headers, {
@@ -596,7 +555,8 @@ def weight_history(
         ts = g.get("date")
         for m in g.get("measures", []):
             if m.get("type") == 1:
-                v = m.get("value"); u = m.get("unit", 0)
+                v = m.get("value")
+                u = m.get("unit", 0)
                 w = v * (10 ** u) if isinstance(v,(int,float)) and isinstance(u,(int,float)) else None
         if w is not None and isinstance(ts, (int, float)):
             items.append({"ts": ts, "weight_kg": w})
@@ -645,43 +605,12 @@ def weight_history(
     return {"start": start, "end": end, "items": items}
 
 
-@router.get("/heart-rate/daily/cached/{date}")
-def heart_rate_daily_cached(
-    date: str,
-    access_token: str,
-    db: Session = Depends(get_db),
-):
-    """Try to get heart rate data from cache first. If not available, returns empty response."""
-    try:
-        # Convert date string to date object
-        try:
-            date_local = datetime.strptime(date, "%Y-%m-%d").date()
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
-            
-        # Get user from access token
-        user, _ = _resolve_user_and_tz(db, access_token)
-        
-        # Get heart rate data from cache
-        from app.db.crud.metrics import get_heart_rate_daily
-        data = get_heart_rate_daily(db, user.id, "withings", date_local)
-        
-        if not data:
-            raise HTTPException(status_code=404, detail="No cached heart rate data found for this date")
-            
-        return data
-        
-    except Exception as e:
-        logger.warning(f"Failed to fetch cached heart rate data: {e}")
-        raise HTTPException(status_code=500, detail="Failed to fetch cached data")
-
 
 @router.get("/heart-rate/daily")
 def heart_rate_daily(
     access_token: str,
     date: Optional[str] = Query(None, description="YYYY-MM-DD (defaults to today)"),
     db: Session = Depends(get_db),
-    # app_user: User | None = Depends(get_current_user_optional),
 ):
     """
     Daily heart-rate roll-up from Withings (avg/min/max) for the given local day.
@@ -757,12 +686,10 @@ def heart_rate_intraday(
     # date-only convenience
     start: Optional[str] = Query(None, description="YYYY-MM-DD (defaults to today, user local)"),
     end: Optional[str] = Query(None, description="YYYY-MM-DD (defaults to start)"),
-    # NEW: rolling window ending now (takes precedence if provided)
     minutes: Optional[int] = Query(
         None, ge=1, le=1440,
         description="Lookback window in minutes, ending now (UTC-converted). If set, ignores start/end."
     ),
-    # NEW: finer control within days (used only when minutes is not provided)
     start_time: Optional[str] = Query(None, description="HH:MM (local). Used with 'start'."),
     end_time: Optional[str] = Query(None, description="HH:MM (local). Used with 'end' (defaults to now if start==end)."),
     debug: int = Query(0, ge=0, le=1, description="Set 1 to include a small raw hint for debugging")
@@ -948,7 +875,6 @@ def spo2(
     start: Optional[str] = Query(None, description="YYYY-MM-DD"),
     end: Optional[str] = Query(None, description="YYYY-MM-DD"),
     db: Session = Depends(get_db),
-    # app_user: User | None = Depends(get_current_user_optional),
 ):
     """
     Latest or range of SpO₂ (%). Persists each reading and updates the daily snapshot.
@@ -977,7 +903,8 @@ def spo2(
 
         for m in g.get("measures", []):
             if m.get("type") == 54:
-                v = m.get("value"); u = m.get("unit", 0)
+                v = m.get("value")
+                u = m.get("unit", 0)
                 p = v * (10 ** u) if isinstance(v, (int, float)) and isinstance(u, (int, float)) else None
                 if p is not None:
                     items.append({"ts": ts, "percent": p})
@@ -1027,7 +954,6 @@ def temperature(
     end: str   = Query(..., description="YYYY-MM-DD"),
     tz: str    = Query("UTC", description="IANA tz like Europe/Rome"),
     db: Session = Depends(get_db),
-    # app_user: User | None = Depends(get_current_user_optional),
 ):
     """
     Manual body temperature (attrib=2), °C.
@@ -1156,7 +1082,6 @@ def ecg_list(
     tz: str              = Query("Europe/Rome", description="IANA timezone for window"),
     limit: int           = Query(25, ge=1, le=200, description="Max ECG items"),
     db: Session = Depends(get_db),
-    # app_user: User | None = Depends(get_current_user_optional),
 ):
     """
     List ECG recordings (newest first) within the [start,end] local-day window.
@@ -1270,7 +1195,6 @@ def ecg_list(
 @router.get("/hrv")
 def hrv_nightly(
     access_token: str,
-    # By default: try today; if empty we’ll also look at yesterday (common for nightly data)
     start: Optional[str] = Query(None, description="YYYY-MM-DD (default: today)"),
     end: Optional[str]   = Query(None, description="YYYY-MM-DD (default: start)"),
     tz: str              = Query("Europe/Rome", description="IANA timezone for local days"),
@@ -1405,3 +1329,72 @@ def steps_series(
 
 
 
+
+# Cache helpers --------------------------------------------------
+
+@router.get("/weight/history/cached")
+def weight_history_cached(
+    access_token: str,
+    start: str = Query(..., description="YYYY-MM-DD"),
+    end: str = Query(..., description="YYYY-MM-DD"),
+    db: Session = Depends(get_db),
+):
+    """Try to get weight history data from cache first. If not available, returns 404."""
+    try:
+        user, _tz = _resolve_user_and_tz(db, access_token)
+        
+        try:
+            start_date = datetime.strptime(start, "%Y-%m-%d").date()
+            end_date = datetime.strptime(end, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+
+        from app.db.crud.metrics import get_weight_history
+        items = get_weight_history(db, user.id, "withings", start_date, end_date)
+        
+        if not items:
+            raise HTTPException(status_code=404, detail="No cached weight data found for this date range")
+        
+        return {
+            "start": start,
+            "end": end,
+            "items": items,
+            "fromCache": True
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning(f"Failed to fetch cached weight data: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch cached data")
+
+
+@router.get("/heart-rate/daily/cached/{date}")
+def heart_rate_daily_cached(
+    date: str,
+    access_token: str,
+    db: Session = Depends(get_db),
+):
+    """Try to get heart rate data from cache first. If not available, returns empty response."""
+    try:
+        # Convert date string to date object
+        try:
+            date_local = datetime.strptime(date, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+            
+        # Get user from access token
+        user, _ = _resolve_user_and_tz(db, access_token)
+        
+        # Get heart rate data from cache
+        from app.db.crud.metrics import get_heart_rate_daily
+        data = get_heart_rate_daily(db, user.id, "withings", date_local)
+        
+        if not data:
+            raise HTTPException(status_code=404, detail="No cached heart rate data found for this date")
+            
+        return data
+        
+    except Exception as e:
+        logger.warning(f"Failed to fetch cached heart rate data: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch cached data")

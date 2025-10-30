@@ -15,7 +15,6 @@ class FitbitAccountCreate(FitbitAccountBase):
     refresh_token: str
 
 class FitbitAccountUpdate(BaseModel):
-    # allow partial updates on rotation/expiry
     access_token: str | None = None
     refresh_token: str | None = None
     scope: str | None = None

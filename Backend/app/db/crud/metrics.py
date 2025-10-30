@@ -474,7 +474,13 @@ def _update_snapshot_temperature(
     db.execute(stmt)
 
 
-def get_weight_history(db: Session, user_id: str, provider: str, start_date: date, end_date: date):
+def get_weight_history(
+    db: Session, 
+    user_id: str, 
+    provider: str, 
+    start_date: date, 
+    end_date: date
+):
     """
     Retrieve weight history from database for given date range.
     Returns list of dicts with { ts: int, weight_kg: float, device?: str }
@@ -500,12 +506,18 @@ def get_weight_history(db: Session, user_id: str, provider: str, start_date: dat
     
     return items
 
-def get_heart_rate_daily(db: Session, user_id: str, provider: str, date_local: date) -> dict | None:
+
+def get_heart_rate_daily(
+    db: Session, 
+    user_id: str, 
+    provider: str, 
+    date_local: date
+) -> dict | None:
     """
     Retrieve heart rate data from database for a specific date.
     Returns dict with { date, hr_average, hr_min, hr_max } or None if not found
     """
-    # Query the HeartRateDaily table for the specific date
+    
     record = (
         db.query(HeartRateDaily)
         .filter(

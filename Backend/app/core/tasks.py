@@ -1,9 +1,8 @@
-from datetime import datetime, date
+from datetime import datetime
 from sqlalchemy.orm import Session
 from app.db.models.user import User
 from app.db.engine import SessionLocal
 from app.core.email import EmailSender
-from app.db.models.heart_rate import HeartRateDaily
 from app.db.crud.metrics import get_heart_rate_daily
 import asyncio
 import logging

@@ -1,4 +1,3 @@
-// const API_BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 const API_BASE_URL = import.meta.env.VITE_API_URL;
 
 type Provider = "fitbit" | "withings";
@@ -230,6 +229,7 @@ export const metrics = {
   },
 };
 
+// ----------------------------------------------------------
 // ---------- Withings ----------
 export async function getWithingsAuthUrl(scope: string) {
   const res = await fetch(
@@ -553,8 +553,6 @@ export async function withingsStepsDaily(accessToken: string, date: string) {
   };
 }
 
-// Fetch steps for each date in [start, end] inclusive.
-// Keep for next step when we wire the Steps page.
 export async function withingsStepsRange(
   accessToken: string,
   start: string, // YYYY-MM-DD
@@ -574,11 +572,10 @@ export async function withingsStepsRange(
   return results; // array of {date, steps, ...}
 }
 
-// ADD THIS next to withingsWeightHistory()
 export async function withingsWeightHistoryCached(
   accessToken: string,
-  start: string, // YYYY-MM-DD
-  end: string // YYYY-MM-DD
+  start: string,
+  end: string
 ) {
   const u = new URL(`${API_BASE_URL}/withings/metrics/weight/history/cached`);
   u.searchParams.set("access_token", accessToken);
@@ -587,7 +584,6 @@ export async function withingsWeightHistoryCached(
 
   const r = await fetch(u.toString(), { credentials: "include" });
 
-  // If there's no cache, the backend returns 404 — treat that as a cache miss, not an error.
   if (r.status === 404) return null;
 
   const d = await r.json();

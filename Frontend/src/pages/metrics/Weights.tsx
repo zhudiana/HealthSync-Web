@@ -65,7 +65,6 @@ export default function Weights() {
         throw new Error("No Withings session found. Please connect Withings.");
 
       // --- try cache first ---
-      console.log("Trying cached weight history:", dateFrom, dateTo);
       const cached = await withingsWeightHistoryCached(
         accessToken,
         dateFrom,
@@ -77,11 +76,6 @@ export default function Weights() {
         cached && Array.isArray(cached.items) && cached.items.length > 0
           ? cached
           : await withingsWeightHistory(accessToken, dateFrom, dateTo);
-
-      console.log(
-        `Using ${cached ? "CACHED" : "LIVE"} weight history`,
-        JSON.stringify(hist, null, 2)
-      );
 
       const daily: WeightPoint[] = (hist.items || [])
         .map((it) => {
@@ -109,7 +103,6 @@ export default function Weights() {
         setLatest(null);
       }
     } catch (e: any) {
-      console.error(e);
       setError(e?.message || "Failed to load weight data");
     } finally {
       setLoading(false);

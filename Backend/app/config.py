@@ -16,3 +16,9 @@ SQLALCHEMY_DATABASE_URL = os.getenv("SQLALCHEMY_DATABASE_URL")
 APP_SECRET_KEY = os.getenv("APP_SECRET_KEY", "dev-insecure-change-me")
 
 REDIS_URL = os.getenv("REDIS_URL")
+
+SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER = os.getenv("SMTP_USER", "")
+SMTP_PASSWORD = os.getenv("SMTP_PASS", "")
+FROM_EMAIL = os.getenv("SMTP_FROM", "")

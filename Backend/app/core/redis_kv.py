@@ -3,7 +3,7 @@ import json
 from typing import Optional, Dict, Any
 import redis
 
-REDIS_URL = os.getenv("REDIS_URL")  # must be set in prod
+REDIS_URL = os.getenv("REDIS_URL")
 r = redis.Redis.from_url(
     REDIS_URL,
     decode_responses=True, 

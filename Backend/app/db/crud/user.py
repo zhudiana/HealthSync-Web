@@ -22,7 +22,6 @@ def get_or_create_user_from_fitbit(db: Session, fitbit_user_id: str, display_nam
     auth_user_id = f"fitbit:{fitbit_user_id}"
     user = db.query(User).filter(User.auth_user_id == auth_user_id).first()
     if user:
-        # optionally refresh display_name if it was empty
         if display_name and not user.display_name:
             user.display_name = display_name
             db.add(user) 

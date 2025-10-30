@@ -5,7 +5,7 @@ from app.db.crud.user import get_or_create_user_from_fitbit
 from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from typing import Optional, Dict, Any
+from typing import Dict, Any
 from app.dependencies import get_db
 from app.db.schemas import fitbit as db_schemas
 from app.db.crud.fitbit import upsert_fitbit_account
@@ -14,7 +14,6 @@ import requests
 import hashlib
 import secrets
 import urllib.parse
-
 
 
 router = APIRouter(prefix="/fitbit", tags=["Fitbit Auth"])
@@ -59,7 +58,6 @@ def generate_pkce_values() -> PKCEValues:
 
 
 
-
 @router.get("/login")
 def login_fitbit():
     FITBIT_SCOPES = "activity heartrate sleep temperature oxygen_saturation weight profile settings"
@@ -89,6 +87,7 @@ def login_fitbit():
     }
     url = f"{FITBIT_AUTHORIZE_URL}?{urllib.parse.urlencode(auth_params)}"
     return {"authorization_url": url, "state": pkce.state, "redirect_uri": FITBIT_REDIRECT_URI}
+
 
 @router.post("/exchange")
 def fitbit_exchange(
@@ -165,9 +164,6 @@ def fitbit_exchange(
     }
 
 
-
-
-
 def exchange_code_for_tokens(auth_code: str, code_verifier: str) -> Dict[str, Any]:
     """
     Exchange authorization code for access and refresh tokens
@@ -214,6 +210,7 @@ def exchange_code_for_tokens(auth_code: str, code_verifier: str) -> Dict[str, An
             detail=f"Failed to connect to Fitbit API: {str(e)}"
         )
 
+
 @router.post("/refresh")
 def refresh_fitbit_token(refresh_token: str):
     """
@@ -257,7 +254,6 @@ def refresh_fitbit_token(refresh_token: str):
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Failed to connect to Fitbit API: {str(e)}"
         )
-
 
 
 @router.get("/revoke")

@@ -1,4 +1,3 @@
-# app/routers/users.py
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -16,6 +15,7 @@ def get_user_by_auth(auth_user_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="User not found")
     return user
 
+
 @router.patch("/by-auth/{auth_user_id}", response_model=UserRead)
 def update_user_by_auth(
     auth_user_id: str,
@@ -26,11 +26,9 @@ def update_user_by_auth(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # update core fields
     if payload.display_name is not None:
         user.display_name = payload.display_name
 
-        # mirror to Withings account full_name if it exists
         acc = db.query(WithingsAccount).filter(WithingsAccount.user_id == user.id).first()
         if acc:
             acc.full_name = payload.display_name

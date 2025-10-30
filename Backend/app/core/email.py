@@ -1,26 +1,16 @@
-from typing import List, Optional
+from typing import Optional
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from pydantic import EmailStr
 from fastapi import HTTPException
+from app.config import SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, FROM_EMAIL
 
 class EmailConfig:
-    SMTP_HOST: str = ""
-    SMTP_PORT: int = 587
-    SMTP_USER: str = ""
-    SMTP_PASSWORD: str = ""
-    FROM_EMAIL: str = ""
-
-    @classmethod
-    def load_from_env(cls):
-        """Load email configuration from environment variables"""
-        import os
-        cls.SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
-        cls.SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-        cls.SMTP_USER = os.getenv("SMTP_USER", "")
-        cls.SMTP_PASSWORD = os.getenv("SMTP_PASS", "")  # Note: using SMTP_PASS from your env
-        cls.FROM_EMAIL = os.getenv("SMTP_FROM", "")
+    SMTP_HOST: str = SMTP_HOST
+    SMTP_PORT: int = SMTP_PORT
+    SMTP_USER: str = SMTP_USER
+    SMTP_PASSWORD: str = SMTP_PASSWORD
+    FROM_EMAIL: str = FROM_EMAIL
 
     @classmethod
     def initialize(cls, smtp_user: str, smtp_password: str, from_email: Optional[str] = None):

@@ -1,7 +1,5 @@
-# app/withings/utils/withings_parser.py
 from datetime import datetime, timezone
 
-# Official meastypes (subset)
 WITHINGS_MEASURE_TYPES = {
     1:  "weight",               # kg
     4:  "height",               # m

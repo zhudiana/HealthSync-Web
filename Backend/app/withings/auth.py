@@ -66,6 +66,7 @@ def login_withings():
             detail=f"Error generating authorization URL: {str(e)}"
         )
 
+
 def exchange_code_for_tokens(auth_code: str) -> Dict[str, Any]:
     """
     Exchange authorization code for access and refresh tokens
@@ -121,6 +122,7 @@ def exchange_code_for_tokens(auth_code: str) -> Dict[str, Any]:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Failed to connect to Withings API: {str(e)}"
         )
+
 
 @router.post("/withings/refresh")
 def refresh_withings_token(refresh_token: str):

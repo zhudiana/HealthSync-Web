@@ -32,11 +32,8 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup_event():
-    # Create database tables
     Base.metadata.create_all(bind=engine)
     
-    # Initialize email configuration from environment variables
     EmailConfig.load_from_env()
     
-    # Start background tasks
     asyncio.create_task(start_background_tasks())

@@ -29,7 +29,6 @@ class UserRead(BaseModel):
 
 
 # ----------- Withings Schemas -----------
-
 class WithingsAccountCreate(BaseModel):
     withings_user_id: str
     full_name: str | None = None
@@ -40,6 +39,7 @@ class WithingsAccountCreate(BaseModel):
     scope: str | None = None
     token_type: str | None = None
     expires_at: datetime | None = None
+
 
 class WithingsAccountRead(BaseModel):
     id: UUID

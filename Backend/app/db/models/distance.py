@@ -16,16 +16,11 @@ class DistanceDaily(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True),
-                                               ForeignKey("users.id", ondelete="CASCADE"),
-                                               index=True, nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
     provider: Mapped[str] = mapped_column(Provider, index=True, nullable=False)
     date_local: Mapped[date] = mapped_column(Date, index=True, nullable=False)
-
     distance_km: Mapped[float | None] = mapped_column(Float, nullable=True)
-
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow,
-                                                 onupdate=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
 class DistanceIntraday(Base):
@@ -36,9 +31,7 @@ class DistanceIntraday(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True),
-                                               ForeignKey("users.id", ondelete="CASCADE"),
-                                               index=True, nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
     provider: Mapped[str] = mapped_column(Provider, index=True, nullable=False)
 
     date_local: Mapped[date] = mapped_column(Date, index=True, nullable=False)
@@ -48,5 +41,4 @@ class DistanceIntraday(Base):
     resolution: Mapped[str] = mapped_column(String(8), nullable=False)  # e.g., "1m"
     samples_json: Mapped[str] = mapped_column(Text, nullable=False)     # JSON array of {t, km}
 
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow,
-                                                 onupdate=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
