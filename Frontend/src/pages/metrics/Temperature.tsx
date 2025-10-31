@@ -1,12 +1,21 @@
+// src/pages/metrics/Temperature.tsx
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { ChevronLeft, RefreshCw } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
-import { withingsTemperature } from "@/lib/api";
+import { withingsTemperature, withingsTemperatureDaily } from "@/lib/api";
 
-function fmtDateISO(d: number) {
+// ---- helpers ----
+function ymdLocal(d: Date) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function fmtDateISO(tsSec: number) {
   try {
-    return new Date(d * 1000).toLocaleString();
+    return new Date(tsSec * 1000).toLocaleString();
   } catch {
     return "";
   }
@@ -22,13 +31,29 @@ function statusForTemp(temp: number | null | undefined) {
   return { label: "Normal", color: "text-emerald-500", bg: "bg-emerald-500" };
 }
 
+type Preset = 7 | 14 | 30;
+
 export default function TemperaturePage() {
   const { getAccessToken } = useAuth();
+  const [preset, setPreset] = useState<Preset>(14);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
   const [latest, setLatest] = useState<number | null>(null);
   const [latestTs, setLatestTs] = useState<number | null>(null);
   const [items, setItems] = useState<{ ts: number; celsius: number }[]>([]);
+
+  // Date range in LOCAL time
+  const { startYmd, endYmd, label } = useMemo(() => {
+    const end = new Date();
+    const start = new Date();
+    start.setDate(end.getDate() - (preset - 1));
+    return {
+      startYmd: ymdLocal(start),
+      endYmd: ymdLocal(end),
+      label: `Last ${preset} days · ${ymdLocal(start)} → ${ymdLocal(end)}`,
+    };
+  }, [preset]);
 
   async function load() {
     setLoading(true);
@@ -37,47 +62,103 @@ export default function TemperaturePage() {
       const token = await getAccessToken();
       if (!token) throw new Error("Not authenticated");
 
-      // Get data for last 30 days with proper date format (YYYY-MM-DD)
-      const end = new Date().toISOString().split("T")[0];
-      const start = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
-        .toISOString()
-        .split("T")[0];
+      // Build the list of local dates in range
+      const days: string[] = [];
+      for (
+        let d = new Date(startYmd + "T00:00:00");
+        d <= new Date(endYmd + "T00:00:00");
 
-      console.log("Fetching temperature data:", { start, end });
-      const res = await withingsTemperature(token, start, end);
-      console.log("Temperature response:", res);
+      ) {
+        days.push(ymdLocal(d));
+        const n = new Date(d);
+        n.setDate(d.getDate() + 1);
+        d = n;
+      }
 
-      if (res?.items && Array.isArray(res.items)) {
-        // Filter out items with null body_c values and sort by timestamp
-        const validItems = res.items
-          .filter((item) => item.body_c !== null)
-          .sort((a, b) => b.ts - a.ts); // Sort in descending order (newest first)
+      // 1) CACHE FIRST: fetch each day from cache in parallel
+      const cacheResults = await Promise.all(
+        days.map(async (day) => {
+          try {
+            // 404 -> null (your helper already returns null on 404)
+            const resp = await withingsTemperatureDaily(token, day);
+            return { day, data: resp }; // data: { date, items } | null
+          } catch (e) {
+            // treat any non-404 failure as missing so we still fall back
+            return { day, data: null };
+          }
+        })
+      );
 
-        const transformed = validItems.map((item) => ({
-          ts: item.ts,
-          celsius: item.body_c!,
-        }));
+      // Flatten cached items
+      const byTs = new Map<number, number>(); // ts -> celsius
+      const missingDays = new Set<string>();
 
-        console.log("Transformed items:", transformed);
-        setItems(transformed);
-
-        // Set latest from the most recent valid measurement
-        if (transformed.length > 0) {
-          setLatest(transformed[0].celsius);
-          setLatestTs(transformed[0].ts);
+      for (const { day, data } of cacheResults) {
+        if (data?.items?.length) {
+          for (const it of data.items) {
+            if (it.body_c != null) byTs.set(it.ts, it.body_c);
+          }
         } else {
-          setLatest(null);
-          setLatestTs(null);
+          missingDays.add(day);
         }
+      }
+
+      // 2) If TODAY is missing, fetch LIVE for today (narrow hit)
+      const today = ymdLocal(new Date());
+      if (missingDays.has(today)) {
+        try {
+          const liveToday = await withingsTemperature(token, today, today);
+          if (liveToday?.items?.length) {
+            for (const it of liveToday.items) {
+              if (it.body_c != null) byTs.set(it.ts, it.body_c);
+            }
+            missingDays.delete(today);
+          }
+        } catch {
+          // ignore; if live fails, we leave today missing
+        }
+      }
+
+      // 3) If other days are still missing, fetch the range once and merge only those days
+      if (missingDays.size > 0) {
+        try {
+          const range = await withingsTemperature(token, startYmd, endYmd);
+          if (range?.items?.length) {
+            for (const it of range.items) {
+              if (it.body_c == null) continue;
+              const ymd = ymdLocal(new Date(it.ts * 1000));
+              if (missingDays.has(ymd)) {
+                byTs.set(it.ts, it.body_c);
+              }
+            }
+          }
+        } catch {
+          // ignore; we still show whatever cache had
+        }
+      }
+
+      // 4) Build UI array, keep only those in local range, newest first
+      const merged = Array.from(byTs.entries())
+        .map(([ts, celsius]) => ({ ts, celsius }))
+        .filter(({ ts }) => {
+          const ymd = ymdLocal(new Date(ts * 1000));
+          return ymd >= startYmd && ymd <= endYmd;
+        })
+        .sort((a, b) => b.ts - a.ts);
+
+      setItems(merged);
+      if (merged.length) {
+        setLatest(merged[0].celsius);
+        setLatestTs(merged[0].ts);
       } else {
-        console.log("No temperature data found");
         setLatest(null);
         setLatestTs(null);
-        setItems([]);
       }
     } catch (e: any) {
-      console.error("Error loading temperature data:", e);
       setError(e?.message || "Failed to load temperature data");
+      setItems([]);
+      setLatest(null);
+      setLatestTs(null);
     } finally {
       setLoading(false);
     }
@@ -86,7 +167,7 @@ export default function TemperaturePage() {
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [preset, startYmd, endYmd]);
 
   const status = useMemo(() => statusForTemp(latest), [latest]);
 
@@ -101,8 +182,20 @@ export default function TemperaturePage() {
           >
             <ChevronLeft className="h-5 w-5 text-neutral-100" />
           </Link>
-          <h1 className="text-2xl font-bold">Body Temperature</h1>
+          <div>
+            <h1 className="text-2xl font-bold">Body Temperature</h1>
+            <p className="text-neutral-400">{label}</p>
+          </div>
           <div className="ml-auto flex items-center gap-2">
+            <select
+              className="rounded-md bg-neutral-900 border border-neutral-800 px-2 py-1 text-sm"
+              value={preset}
+              onChange={(e) => setPreset(Number(e.target.value) as Preset)}
+            >
+              <option value={7}>Last 7 days</option>
+              <option value={14}>Last 14 days</option>
+              <option value={30}>Last 30 days</option>
+            </select>
             <button
               onClick={load}
               disabled={loading}
@@ -181,30 +274,34 @@ export default function TemperaturePage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-neutral-800/60 bg-neutral-950/20">
-                    {items.map((it) => {
-                      const status = statusForTemp(it.celsius);
-                      return (
-                        <tr key={it.ts} className="hover:bg-neutral-900/40">
-                          <td className="whitespace-nowrap px-4 py-3 text-sm text-neutral-200">
-                            {new Date(it.ts * 1000).toLocaleString(undefined, {
-                              dateStyle: "medium",
-                              timeStyle: "short",
-                            })}
-                          </td>
-                          <td className="whitespace-nowrap px-4 py-3 text-sm text-neutral-100 text-center font-medium">
-                            {it.celsius.toFixed(1)}°C
-                          </td>
-                          <td className="whitespace-nowrap px-4 py-3 text-sm">
-                            <span
-                              className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${status.bg}/10 ${status.color}`}
-                            >
-                              {status.label}
-                            </span>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                    {items.length === 0 && (
+                    {items.length > 0 ? (
+                      items.map((it) => {
+                        const st = statusForTemp(it.celsius);
+                        return (
+                          <tr key={it.ts} className="hover:bg-neutral-900/40">
+                            <td className="whitespace-nowrap px-4 py-3 text-sm text-neutral-200">
+                              {new Date(it.ts * 1000).toLocaleString(
+                                undefined,
+                                {
+                                  dateStyle: "medium",
+                                  timeStyle: "short",
+                                }
+                              )}
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-3 text-sm text-neutral-100 text-center font-medium">
+                              {it.celsius.toFixed(1)}°C
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-3 text-sm">
+                              <span
+                                className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${st.bg}/10 ${st.color}`}
+                              >
+                                {st.label}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    ) : (
                       <tr>
                         <td
                           colSpan={3}
@@ -217,10 +314,10 @@ export default function TemperaturePage() {
                   </tbody>
                 </table>
               </div>
-            </div>
 
-            <div className="mt-6 text-xs text-neutral-400">
-              {error && <div className="text-red-500">{error}</div>}
+              {error && (
+                <div className="mt-6 text-xs text-red-500">{error}</div>
+              )}
             </div>
           </div>
 
@@ -236,8 +333,7 @@ export default function TemperaturePage() {
                 individual factors.
               </p>
               <p className="mb-3">
-                A temperature above 38°C (100.4°F) usually indicates a fever,
-                which is often a sign that your body is fighting an infection.
+                A temperature above 38°C (100.4°F) usually indicates a fever.
                 While mild fevers aren't typically concerning, persistent high
                 temperatures should be evaluated by a healthcare provider.
               </p>
@@ -254,16 +350,9 @@ export default function TemperaturePage() {
                 <strong className="font-medium">Mild fever</strong>: 37.0–37.9°C
               </li>
               <li>
-                <strong className="font-medium">High fever</strong>: ≥ 38.0°C —
-                consider seeking medical advice
+                <strong className="font-medium">High fever</strong>: ≥ 38.0°C
               </li>
             </ul>
-
-            <p className="mt-4 text-xs text-neutral-400">
-              The measurement shown here is taken from your connected
-              device/provider. If you have concerns about your readings, consult
-              a healthcare professional.
-            </p>
           </aside>
         </div>
       </main>

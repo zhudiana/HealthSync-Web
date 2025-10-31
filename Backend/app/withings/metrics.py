@@ -5,7 +5,7 @@ from datetime import datetime, timedelta,time, date as _date
 from zoneinfo import ZoneInfo
 from sqlalchemy.orm import Session
 from app.dependencies import get_db
-from app.db.models import WithingsAccount, User
+from app.db.models import WithingsAccount, User, SpO2Reading
 from app.utils.crypto import decrypt_text  
 import json
 from app.db.crud.metrics import (
@@ -1332,6 +1332,51 @@ def steps_series(
 
 # Cache helpers --------------------------------------------------
 
+@router.get("/spo2/daily/cached/{date}")
+def spo2_daily_cached(
+    date: str,
+    access_token: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Get SpO2 readings for a specific date from the database cache.
+    Returns 404 if no cached data is found.
+    """
+    try:
+        user, tz = _resolve_user_and_tz(db, access_token)
+        day_local = datetime.fromisoformat(date).date()
+        
+        # Convert local date to UTC range for query
+        day_start = datetime.combine(day_local, time.min, tzinfo=ZoneInfo(tz))
+        next_day = day_local + timedelta(days=1)
+        day_end = datetime.combine(next_day, time.min, tzinfo=ZoneInfo(tz))
+        
+        readings = db.query(SpO2Reading).filter(
+            SpO2Reading.user_id == user.id,
+            SpO2Reading.provider == "withings",
+            SpO2Reading.measured_at_utc >= day_start,
+            SpO2Reading.measured_at_utc < day_end  # Use < instead of <= for exclusive end
+        ).all()
+
+        if not readings:
+            raise HTTPException(status_code=404, detail="No cached SpO2 data found")
+
+        return {
+            "date": date,
+            "items": [
+                {
+                    "ts": int(r.measured_at_utc.timestamp()),
+                    "percent": r.avg_pct
+                }
+                for r in readings
+            ]
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get cached SpO2: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get cached SpO2")
+
 @router.get("/weight/history/cached")
 def weight_history_cached(
     access_token: str,
@@ -1481,3 +1526,43 @@ def steps_daily_cached(
     except Exception as e:
         logger.warning(f"Failed to fetch cached distance data: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch cached data")
+
+
+
+@router.get("/temperature/daily/cached/{date}")
+def temperature_daily_cached(
+    date: str,
+    access_token: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Try to get temperature data for a local date from cache.
+    Returns 404 if not found (frontend will fall back to range API).
+    """
+    try:
+        # Validate date format
+        try:
+            date_local = datetime.strptime(date, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+
+        # Resolve user (and tz if you need it)
+        user, _tz = _resolve_user_and_tz(db, access_token)
+
+        # Query cache by local date (your CRUD handles local date)
+        from app.db.crud.metrics import get_temperature_daily
+        data = get_temperature_daily(db, user.id, "withings", date_local)
+
+        if not data:
+            raise HTTPException(status_code=404, detail="No cached temperature data found for this date")
+
+        return data
+
+    except HTTPException:
+        # IMPORTANT: don't convert 404/400 to 500
+        raise
+    except Exception as e:
+        logger.warning(f"Failed to fetch cached temperature data: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch cached data")
+
+

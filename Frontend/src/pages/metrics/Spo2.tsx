@@ -2,14 +2,23 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { ChevronLeft, RefreshCw } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
-import { withingsSpO2 } from "@/lib/api";
+import { withingsSpO2, withingsSpO2Cached } from "@/lib/api";
 
+// ---- helpers ----
 function fmtDateISO(d: number) {
   try {
     return new Date(d * 1000).toLocaleString();
   } catch {
     return "";
   }
+}
+
+// Local YYYY-MM-DD (no UTC conversion)
+function ymdLocal(d: Date) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 function statusForPercent(p: number | null | undefined) {
@@ -26,13 +35,29 @@ function statusForPercent(p: number | null | undefined) {
   return { label: "Low", color: "text-red-500", bg: "bg-red-500" };
 }
 
+type Preset = 7 | 14 | 30;
+
 export default function Spo2Page() {
   const { getAccessToken } = useAuth();
+  const [preset, setPreset] = useState<Preset>(14);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
   const [latest, setLatest] = useState<number | null>(null);
   const [latestTs, setLatestTs] = useState<number | null>(null);
   const [items, setItems] = useState<{ ts: number; percent: number }[]>([]);
+
+  // Date range in LOCAL time
+  const { startYmd, endYmd, label } = useMemo(() => {
+    const end = new Date();
+    const start = new Date();
+    start.setDate(end.getDate() - (preset - 1));
+    return {
+      startYmd: ymdLocal(start),
+      endYmd: ymdLocal(end),
+      label: `Last ${preset} days · ${ymdLocal(start)} → ${ymdLocal(end)}`,
+    };
+  }, [preset]);
 
   async function load() {
     setLoading(true);
@@ -40,31 +65,67 @@ export default function Spo2Page() {
     try {
       const token = await getAccessToken();
       if (!token) throw new Error("Not authenticated");
-      const res = await withingsSpO2(token);
-      if (res?.items && Array.isArray(res.items)) {
-        const sorted = res.items.slice().sort((a, b) => a.ts - b.ts);
-        setItems(sorted);
-        const last = sorted[sorted.length - 1];
-        if (last) {
-          setLatest(last.percent);
-          setLatestTs(last.ts);
-        } else {
-          setLatest(null);
-          setLatestTs(null);
+
+      // 1) Always fetch full-range API first (ensures today is included)
+      const base: { ts: number; percent: number }[] = [];
+      const apiData = await withingsSpO2(token, startYmd, endYmd);
+      if (apiData?.items && Array.isArray(apiData.items)) {
+        base.push(...apiData.items);
+      }
+
+      // 2) Merge in any cached days (augment/override); this covers past days quickly
+      const byTs = new Map<number, number>(); // ts -> percent
+      for (const it of base) byTs.set(it.ts, it.percent);
+
+      // iterate day-by-day in LOCAL time
+      let cur = new Date(startYmd + "T00:00:00");
+      const end = new Date(endYmd + "T00:00:00");
+
+      while (cur <= end) {
+        const dateStr = ymdLocal(cur);
+        try {
+          const cached = await withingsSpO2Cached(token, dateStr);
+          if (cached?.items?.length) {
+            for (const it of cached.items) {
+              // cache can override api or just add more points
+              byTs.set(it.ts, it.percent);
+            }
+          }
+        } catch (e) {
+          // ignore per-day cache errors
+          // console.warn(`Cache error for ${dateStr}`, e);
         }
-      } else if (res?.latest?.percent != null) {
-        setLatest(res.latest.percent);
-        setLatestTs(res.latest.ts);
-        setItems(
-          res.latest ? [{ ts: res.latest.ts, percent: res.latest.percent }] : []
-        );
+        const next = new Date(cur);
+        next.setDate(cur.getDate() + 1);
+        cur = next;
+      }
+
+      // 3) Build final array
+      const merged = Array.from(byTs.entries())
+        .map(([ts, percent]) => ({ ts, percent }))
+        // keep only those whose LOCAL date within [startYmd, endYmd]
+        .filter((it) => {
+          const d = new Date(it.ts * 1000);
+          const ymd = ymdLocal(d);
+          return ymd >= startYmd && ymd <= endYmd;
+        })
+        // newest first
+        .sort((a, b) => b.ts - a.ts);
+
+      setItems(merged);
+
+      if (merged.length) {
+        setLatest(merged[0].percent);
+        setLatestTs(merged[0].ts);
       } else {
         setLatest(null);
         setLatestTs(null);
-        setItems([]);
       }
     } catch (e: any) {
-      setError(e?.message || "Failed to load SpO2 data");
+      setError(e?.message || "Failed to load SpO₂ data");
+      setItems([]);
+      setLatest(null);
+      setLatestTs(null);
     } finally {
       setLoading(false);
     }
@@ -73,7 +134,7 @@ export default function Spo2Page() {
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [preset, startYmd, endYmd]);
 
   const status = useMemo(() => statusForPercent(latest), [latest]);
 
@@ -88,8 +149,20 @@ export default function Spo2Page() {
           >
             <ChevronLeft className="h-5 w-5 text-neutral-100" />
           </Link>
-          <h1 className="text-2xl font-bold">Oxygen Saturation (SpO2)</h1>
+          <div>
+            <h1 className="text-2xl font-bold">Oxygen Saturation (SpO₂)</h1>
+            <p className="text-neutral-400">{label}</p>
+          </div>
           <div className="ml-auto flex items-center gap-2">
+            <select
+              className="rounded-md bg-neutral-900 border border-neutral-800 px-2 py-1 text-sm"
+              value={preset}
+              onChange={(e) => setPreset(Number(e.target.value) as Preset)}
+            >
+              <option value={7}>Last 7 days</option>
+              <option value={14}>Last 14 days</option>
+              <option value={30}>Last 30 days</option>
+            </select>
             <button
               onClick={load}
               disabled={loading}
@@ -161,7 +234,7 @@ export default function Spo2Page() {
                         Date & Time
                       </th>
                       <th className="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wider text-neutral-400">
-                        SpO2
+                        SpO₂
                       </th>
                       <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-neutral-400">
                         Status
@@ -169,11 +242,9 @@ export default function Spo2Page() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-neutral-800/60 bg-neutral-950/20">
-                    {items
-                      .slice()
-                      .reverse()
-                      .map((it) => {
-                        const status = statusForPercent(it.percent);
+                    {items.length > 0 ? (
+                      items.map((it) => {
+                        const st = statusForPercent(it.percent);
                         return (
                           <tr key={it.ts} className="hover:bg-neutral-900/40">
                             <td className="whitespace-nowrap px-4 py-3 text-sm text-neutral-200">
@@ -190,18 +261,18 @@ export default function Spo2Page() {
                             </td>
                             <td className="whitespace-nowrap px-4 py-3 text-sm">
                               <span
-                                className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${status.bg}/10 ${status.color}`}
+                                className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${st.bg}/10 ${st.color}`}
                               >
-                                {status.label}
+                                {st.label}
                               </span>
                             </td>
                           </tr>
                         );
-                      })}
-                    {items.length === 0 && (
+                      })
+                    ) : (
                       <tr>
                         <td
-                          colSpan={2}
+                          colSpan={3}
                           className="px-4 py-6 text-center text-neutral-400"
                         >
                           No measurements available.
@@ -216,12 +287,12 @@ export default function Spo2Page() {
 
           <aside className="md:col-span-1 rounded-2xl border border-neutral-800 bg-neutral-900/40 p-6">
             <h3 className="text-lg font-semibold mb-4 text-neutral-100">
-              About SpO2
+              About SpO₂
             </h3>
             <div className="text-sm text-neutral-200 leading-relaxed max-w-none">
               <p className="mb-3">
-                Oxygen saturation (SpO2) measures the percentage of hemoglobin
-                in your blood that is saturated with oxygen. A healthy SpO2
+                Oxygen saturation (SpO₂) measures the percentage of hemoglobin
+                in your blood that is saturated with oxygen. A healthy SpO₂
                 value for most people at sea level is typically 95% or higher.
                 Readings can vary with activity, altitude, and the measurement
                 method.
@@ -239,7 +310,7 @@ export default function Spo2Page() {
             </h3>
             <ul className="text-sm text-neutral-300 space-y-2">
               <li>
-                <strong className="font-medium">Normal</strong>: SpO2 ≥ 95%
+                <strong className="font-medium">Normal</strong>: SpO₂ ≥ 95%
               </li>
               <li>
                 <strong className="font-medium">Below average</strong>: 90–94%

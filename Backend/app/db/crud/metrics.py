@@ -597,3 +597,43 @@ def get_distance_daily(
         "date": date_local.isoformat(),
         "distance_km": record.distance_km
     }
+
+def get_temperature_daily(
+    db: Session, 
+    user_id: str, 
+    provider: str, 
+    date_local: date
+) -> dict | None:
+    """
+    Retrieve temperature readings from database for a specific date.
+    Returns dict with list of readings { items: [{ ts, body_c }] }
+    """
+    
+    # Get temperature readings for this user/provider/date
+    query = (
+        db.query(TemperatureReading)
+        .filter(
+            TemperatureReading.user_id == user_id,
+            TemperatureReading.provider == provider,
+            # date_local needs special handling since we store UTC timestamps
+        )
+        .order_by(TemperatureReading.measured_at_utc.desc())
+    )
+    
+    # Manual filtering since we need to handle timezone conversion
+    items = []
+    for reading in query.all():
+        # Convert UTC to local date and check if it matches
+        reading_date = reading.measured_at_utc.date()
+        if reading_date == date_local:
+            items.append({
+                "ts": int(reading.measured_at_utc.timestamp()),
+                "body_c": reading.temperature_c
+            })
+            
+    if not items:
+        return None
+        
+    return {
+        "items": items
+    }

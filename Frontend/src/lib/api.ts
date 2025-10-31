@@ -624,3 +624,34 @@ export async function withingsWeightHistoryCached(
     fromCache?: boolean;
   } | null;
 }
+
+export async function withingsSpO2Cached(accessToken: string, date: string) {
+  const res = await fetch(
+    `${API_BASE_URL}/withings/metrics/spo2/daily/cached/${date}?access_token=${encodeURIComponent(
+      accessToken
+    )}`
+  );
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(await res.text());
+  return res.json() as Promise<{
+    date: string;
+    items: { ts: number; percent: number }[];
+  }>;
+}
+
+export async function withingsTemperatureDaily(
+  accessToken: string,
+  date: string
+) {
+  const res = await fetch(
+    `${API_BASE_URL}/withings/metrics/temperature/daily/cached/${date}?access_token=${encodeURIComponent(
+      accessToken
+    )}`
+  );
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(await res.text());
+  return res.json() as Promise<{
+    date: string;
+    items: { ts: number; body_c: number }[];
+  }>;
+}
