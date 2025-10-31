@@ -24,6 +24,9 @@ function formatDate(d: string | Date) {
   return dt.toISOString().slice(0, 10);
 }
 
+// --------------------- imports ---------------------
+import { withingsDistanceDaily } from "../../lib/api";
+
 // --------------------- types ---------------------
 interface DistancePoint {
   date: string;
@@ -59,30 +62,76 @@ export default function Distance() {
       if (!accessToken)
         throw new Error("No Withings session found. Please connect Withings.");
 
-      console.log("Fetching distance data:", { dateFrom, dateTo });
-      const points = await stepsSeries(
+      const todayStr = formatDate(new Date());
+      const points: DistancePoint[] = [];
+
+      // Always get fresh data for today
+      const todayData = await stepsSeries(
         accessToken,
         "withings",
-        dateFrom,
-        dateTo
+        todayStr,
+        todayStr
       );
-      console.log("Raw API response:", points);
+      if (todayData?.[0]) {
+        points.push({
+          date: todayStr,
+          distance_km: todayData[0].distance_km || 0,
+        });
+      }
 
-      const normalized = (points || [])
-        .map((p) => {
-          if (!p.date || p.distance_km === undefined) {
-            console.log("Skipping invalid point:", p);
-            return null;
+      // Try to get cached data for previous days
+      let currentDate = new Date(dateFrom);
+      const endDate = new Date(dateTo);
+
+      while (currentDate <= endDate) {
+        const dateStr = formatDate(currentDate);
+        // Skip today since we already have fresh data for it
+        if (dateStr === todayStr) {
+          currentDate.setDate(currentDate.getDate() + 1);
+          continue;
+        }
+
+        try {
+          const data = await withingsDistanceDaily(accessToken, dateStr);
+          if (data && data.distance_km !== null) {
+            points.push({
+              date: dateStr,
+              distance_km: data.distance_km,
+            });
           }
-          return {
-            date: p.date,
-            distance_km: Number(p.distance_km || 0),
-          };
-        })
-        .filter((p): p is DistancePoint => p !== null)
+        } catch (e) {
+          console.warn(`Failed to get cached data for ${dateStr}:`, e);
+          // If cached data not available, we'll fall back to the API
+          try {
+            const apiData = await stepsSeries(
+              accessToken,
+              "withings",
+              dateStr,
+              dateStr
+            );
+            if (apiData?.[0]) {
+              points.push({
+                date: dateStr,
+                distance_km: apiData[0].distance_km || 0,
+              });
+            }
+          } catch (e) {
+            console.warn(`Failed to fetch API data for ${dateStr}:`, e);
+          }
+        }
+        currentDate.setDate(currentDate.getDate() + 1);
+      }
+
+      // Sort by date
+      const normalized = points
+        .filter(
+          (p): p is DistancePoint =>
+            p.date !== undefined &&
+            p.distance_km !== undefined &&
+            !Number.isNaN(p.distance_km)
+        )
         .sort((a, b) => a.date.localeCompare(b.date));
 
-      console.log("Normalized data:", normalized);
       setSeries(normalized);
     } catch (e: any) {
       console.error("Error loading distance data:", e);

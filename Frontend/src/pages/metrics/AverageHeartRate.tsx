@@ -375,7 +375,6 @@ export default function AverageHeartRate() {
               initialHigh={thresholds.high}
               onSave={async ({ low, high }) => {
                 try {
-                  console.log("Saving thresholds:", { low, high });
                   const authUserId = localStorage.getItem("authUserId");
                   if (!authUserId) throw new Error("Not authenticated");
 
@@ -383,7 +382,6 @@ export default function AverageHeartRate() {
                     hr_threshold_low: low,
                     hr_threshold_high: high,
                   });
-                  console.log("Save response:", response);
 
                   // Verify the response has the expected properties
                   if (

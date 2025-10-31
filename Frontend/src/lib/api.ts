@@ -572,6 +572,16 @@ export async function withingsStepsRange(
   return results; // array of {date, steps, ...}
 }
 
+export async function withingsDistanceDaily(accessToken: string, date: string) {
+  const res = await fetch(
+    `${API_BASE_URL}/withings/metrics/distance/daily/cached/${date}?access_token=${encodeURIComponent(
+      accessToken
+    )}`
+  );
+  if (!res.ok && res.status !== 404) throw new Error(await res.text());
+  return res.json();
+}
+
 export async function withingsWeightHistoryCached(
   accessToken: string,
   start: string,

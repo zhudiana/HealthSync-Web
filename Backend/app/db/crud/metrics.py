@@ -539,3 +539,31 @@ def get_heart_rate_daily(
     }
 
 
+def get_distance_daily(
+    db: Session, 
+    user_id: str, 
+    provider: str, 
+    date_local: date
+) -> dict | None:
+    """
+    Retrieve distance data from database for a specific date.
+    Returns dict with { date, distance_km } or None if not found
+    """
+    
+    record = (
+        db.query(DistanceDaily)
+        .filter(
+            DistanceDaily.user_id == user_id,
+            DistanceDaily.provider == provider,
+            DistanceDaily.date_local == date_local
+        )
+        .first()
+    )
+    
+    if not record:
+        return None
+        
+    return {
+        "date": date_local.isoformat(),
+        "distance_km": record.distance_km
+    }
