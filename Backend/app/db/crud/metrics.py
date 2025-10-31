@@ -539,6 +539,36 @@ def get_heart_rate_daily(
     }
 
 
+def get_steps_daily(
+    db: Session, 
+    user_id: str, 
+    provider: str, 
+    date_local: date
+) -> dict | None:
+    """
+    Retrieve steps data from database for a specific date.
+    Returns dict with { date, steps } or None if not found
+    """
+    
+    record = (
+        db.query(StepsDaily)
+        .filter(
+            StepsDaily.user_id == user_id,
+            StepsDaily.provider == provider,
+            StepsDaily.date_local == date_local
+        )
+        .first()
+    )
+    
+    if not record:
+        return None
+        
+    return {
+        "date": date_local.isoformat(),
+        "steps": record.steps,
+        "calories": record.calories
+    }
+
 def get_distance_daily(
     db: Session, 
     user_id: str, 

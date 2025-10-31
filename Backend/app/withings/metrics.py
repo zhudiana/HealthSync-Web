@@ -1428,3 +1428,56 @@ def distance_daily_cached(
     except Exception as e:
         logger.warning(f"Failed to fetch cached distance data: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch cached data")
+
+@router.get("/steps/daily/cached/{date}")
+def steps_daily_cached(
+    date: str,
+    access_token: str,
+    db: Session = Depends(get_db),
+):
+    """Try to get steps data from cache first. If not available, returns empty response."""
+    try:
+        # Convert date string to date object
+        try:
+            date_local = datetime.strptime(date, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+            
+        # Get user from access token
+        user, _ = _resolve_user_and_tz(db, access_token)
+        
+        # Get steps data from cache
+        from app.db.crud.metrics import get_steps_daily
+        data = get_steps_daily(db, user.id, "withings", date_local)
+        
+        if not data:
+            raise HTTPException(status_code=404, detail="No cached steps data found for this date")
+            
+        return data
+        
+    except Exception as e:
+        logger.warning(f"Failed to fetch cached steps data: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch cached data")
+    """Try to get distance data from cache first. If not available, returns empty response."""
+    try:
+        # Convert date string to date object
+        try:
+            date_local = datetime.strptime(date, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+            
+        # Get user from access token
+        user, _ = _resolve_user_and_tz(db, access_token)
+        
+        # Get distance data from cache
+        from app.db.crud.metrics import get_distance_daily
+        data = get_distance_daily(db, user.id, "withings", date_local)
+        
+        if not data:
+            raise HTTPException(status_code=404, detail="No cached distance data found for this date")
+            
+        return data
+        
+    except Exception as e:
+        logger.warning(f"Failed to fetch cached distance data: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch cached data")

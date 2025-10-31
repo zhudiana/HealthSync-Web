@@ -537,9 +537,27 @@ export async function stepsSeries(
 
 // --- Withings: steps for a single day (maps to GET /withings/metrics/daily) ---
 export async function withingsStepsDaily(accessToken: string, date: string) {
+  // Try cached endpoint first
+  try {
+    const res = await fetch(
+      `${API_BASE_URL}/withings/metrics/steps/daily/cached/${date}?access_token=${encodeURIComponent(
+        accessToken
+      )}`
+    );
+    if (res.ok) {
+      return res.json();
+    }
+    if (res.status !== 404) {
+      throw new Error(await res.text());
+    }
+  } catch (error) {
+    console.warn("Failed to fetch cached steps data:", error);
+  }
+
+  // Fall back to main API endpoint if cache fails or returns 404
   const u = new URL(`${API_BASE_URL}/withings/metrics/daily`);
   u.searchParams.set("access_token", accessToken);
-  u.searchParams.set("date", date); // YYYY-MM-DD
+  u.searchParams.set("date", date);
   const r = await fetch(u.toString(), { credentials: "include" });
   const d = await r.json();
   if (!r.ok) throw new Error(d?.detail || "withings steps daily failed");

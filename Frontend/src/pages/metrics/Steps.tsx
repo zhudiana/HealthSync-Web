@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowLeft, RefreshCw } from "lucide-react";
 
-import { withingsStepsRange } from "@/lib/api";
+import { withingsStepsDaily } from "@/lib/api";
 import { tokens } from "@/lib/storage";
 
 // recharts
@@ -27,6 +27,14 @@ function StatCard({ title, value }: { title: string; value: string | number }) {
   );
 }
 
+// --- local YYYY-MM-DD (no UTC conversion) ---
+function ymdLocal(d: Date) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 type Preset = 7 | 14 | 30;
 
 export default function StepsPage() {
@@ -47,16 +55,15 @@ export default function StepsPage() {
 
   // ---------------- date range ----------------
   const { startYmd, endYmd, label } = useMemo(() => {
-    const end = new Date(); // today
+    const end = new Date(); // local today
     const start = new Date();
-    // include the last 'preset' days (like Weights page style)
-    // e.g., preset=14 -> last 14 days inclusive
+    // include the last 'preset' days, inclusive
+    // e.g., preset=14 -> last 14 days incl. today
     start.setDate(end.getDate() - (preset - 1));
-    const fmt = (d: Date) => d.toISOString().slice(0, 10);
     return {
-      startYmd: fmt(start),
-      endYmd: fmt(end),
-      label: `Withings · ${fmt(start)} → ${fmt(end)}`,
+      startYmd: ymdLocal(start),
+      endYmd: ymdLocal(end),
+      label: `Withings · ${ymdLocal(start)} → ${ymdLocal(end)}`,
     };
   }, [preset]);
 
@@ -69,13 +76,47 @@ export default function StepsPage() {
     setLoading(true);
     setError(null);
     try {
-      const rows = await withingsStepsRange(accessToken, startYmd, endYmd);
-      const s = rows.map((r) => ({
-        date: r.date,
-        steps: typeof r.steps === "number" ? r.steps : 0,
-      }));
+      const points: Array<{ date: string; steps: number }> = [];
+      const todayStr = ymdLocal(new Date());
 
-      const totals = s.reduce(
+      console.log({
+        nowLocal: new Date().toString(),
+        nowISO: new Date().toISOString(),
+        startYmd,
+        endYmd,
+        todayStr,
+      });
+
+      let currentDate = new Date(startYmd + "T00:00:00"); // ensure parsed in local zone
+      const endDate = new Date(endYmd + "T00:00:00");
+
+      while (currentDate <= endDate) {
+        const dateStr = ymdLocal(currentDate);
+        console.log("fetching dateStr =", dateStr);
+
+        try {
+          // Use withingsStepsDaily for all dates - it handles both cache and live data
+          const data = await withingsStepsDaily(accessToken, dateStr);
+          if (data && data.steps !== null) {
+            points.push({
+              date: dateStr,
+              steps: data.steps,
+            });
+          }
+        } catch (e) {
+          console.warn(`Failed to fetch steps data for ${dateStr}:`, e);
+        }
+
+        // advance by one local day
+        const next = new Date(currentDate);
+        next.setDate(currentDate.getDate() + 1);
+        currentDate = next;
+      }
+
+      // Sort points by date
+      points.sort((a, b) => a.date.localeCompare(b.date));
+
+      const totals = points.reduce(
         (acc, x) => {
           acc.sum += x.steps || 0;
           if ((x.steps ?? 0) > 0) acc.daysWithData += 1;
@@ -84,7 +125,10 @@ export default function StepsPage() {
         { sum: 0, daysWithData: 0 }
       );
 
-      setSeries(s);
+      // Sort newest first for display
+      points.sort((a, b) => b.date.localeCompare(a.date));
+
+      setSeries(points);
       setTotalSteps(totals.sum);
       setDailyAverage(
         totals.daysWithData > 0
@@ -178,7 +222,7 @@ export default function StepsPage() {
             </div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={series}>
+              <AreaChart data={[...series].reverse()}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
                 <XAxis dataKey="date" stroke="#a1a1aa" />
                 <YAxis stroke="#a1a1aa" allowDecimals={false} />
@@ -238,18 +282,16 @@ export default function StepsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-800 bg-zinc-950/40">
-                {[...series]
-                  .sort((a, b) => b.date.localeCompare(a.date))
-                  .map((row) => (
-                    <tr key={row.date} className="hover:bg-zinc-900/40">
-                      <td className="whitespace-nowrap px-4 py-3 text-sm text-zinc-200">
-                        {row.date}
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-sm text-zinc-100">
-                        {row.steps.toLocaleString()}
-                      </td>
-                    </tr>
-                  ))}
+                {series.map((row) => (
+                  <tr key={row.date} className="hover:bg-zinc-900/40">
+                    <td className="whitespace-nowrap px-4 py-3 text-sm text-zinc-200">
+                      {row.date}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-sm text-zinc-100">
+                      {row.steps.toLocaleString()}
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
