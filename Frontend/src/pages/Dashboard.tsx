@@ -1,5 +1,4 @@
-// src/pages/Dashboard.tsx
-import { useEffect, useState } from "react";
+import { useEffect, useState, cloneElement } from "react";
 import { motion } from "framer-motion";
 import {
   Activity,
@@ -10,7 +9,8 @@ import {
   Droplets,
   TrendingUp,
   RefreshCw,
-  Loader2, // NEW
+  Loader2,
+  ChevronRight,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
@@ -65,10 +65,7 @@ function StatCard({
         ].join(" ")}
       >
         <div className="flex items-center justify-between pb-2">
-          <div className="flex items-center gap-2 text-zinc-300">
-            {icon}
-            <div className="text-sm font-medium text-zinc-300">{title}</div>
-          </div>
+          <div className="text-sm font-medium text-zinc-300">{title}</div>
           {pulse && (
             <span
               className="inline-flex h-2 w-2 rounded-full bg-emerald-400 animate-pulse"
@@ -78,7 +75,7 @@ function StatCard({
         </div>
 
         <div className="pt-0">
-          <div className="flex items-end justify-between gap-4">
+          <div className="flex items-center justify-between gap-4">
             <div>
               <div className="text-3xl font-semibold text-white min-h-[2.25rem] flex items-center">
                 {/* value / spinner */}
@@ -100,14 +97,14 @@ function StatCard({
                 <div className="mt-1 text-xs text-zinc-400">{foot}</div>
               ) : null}
             </div>
-            {to && (
-              <span
-                className="text-xs text-zinc-500 opacity-0 group-hover:opacity-100 transition"
-                aria-hidden
-              >
-                View details →
-              </span>
-            )}
+            <div className="flex items-center gap-3">
+              <div className="h-12 w-12 rounded-full bg-sky-950/50 flex items-center justify-center text-sky-400">
+                {cloneElement(icon, { className: 'h-6 w-6' })}
+              </div>
+              {to && (
+                <ChevronRight className="h-5 w-5 text-zinc-600 group-hover:text-zinc-400 transition-colors" />
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -594,7 +591,7 @@ export default function Dashboard() {
         <section className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
           <StatCard
             title="Weight"
-            icon={<Gauge className="h-4 w-4" />}
+            icon={<div className="bg-purple-950/50 text-purple-400"><Gauge className="h-4 w-4" /></div>}
             value={fmtKg(weight)}
             unit="kg"
             foot="Latest"
@@ -604,7 +601,7 @@ export default function Dashboard() {
 
           <StatCard
             title="Distance"
-            icon={<Activity className="h-4 w-4" />}
+            icon={<div className="bg-emerald-950/50 text-emerald-400"><Activity className="h-4 w-4" /></div>}
             value={distance != null ? Number(distance).toFixed(2) : "—"}
             unit="km"
             foot={labelFor(distanceDate)}
@@ -614,7 +611,7 @@ export default function Dashboard() {
 
           <StatCard
             title="Steps"
-            icon={<TrendingUp className="h-4 w-4" />}
+            icon={<div className="bg-blue-950/50 text-blue-400"><TrendingUp className="h-4 w-4" /></div>}
             value={steps ?? "—"}
             unit={labelFor(stepsDate)}
             pulse
@@ -626,14 +623,14 @@ export default function Dashboard() {
             <>
               <StatCard
                 title="Sleep (total)"
-                icon={<Watch className="h-4 w-4" />}
+                icon={<div className="bg-indigo-950/50 text-indigo-400"><Watch className="h-4 w-4" /></div>}
                 value={fmtHMFromHours(sleepHours)}
                 to="/metrics/sleep"
                 loading={loading.sleep}
               />
               <StatCard
                 title="Calories"
-                icon={<Activity className="h-4 w-4" />}
+                icon={<div className="bg-orange-950/50 text-orange-400"><Activity className="h-4 w-4" /></div>}
                 value={calories ?? "—"}
                 unit={labelFor(caloriesDate)}
                 to="/metrics/calories"
@@ -649,7 +646,7 @@ export default function Dashboard() {
                 ? "Oxygen Saturation (SpO₂)"
                 : "Blood Oxygen (SpO₂)"
             }
-            icon={<Droplets className="h-4 w-4" />}
+            icon={<div className="bg-cyan-950/50 text-cyan-400"><Droplets className="h-4 w-4" /></div>}
             value={fmtNumber(spo2, 1)}
             unit="%"
             foot={labelFor(spo2DateIso)}
@@ -660,7 +657,7 @@ export default function Dashboard() {
           {/* Temperature with date in foot */}
           <StatCard
             title={tempLabel}
-            icon={<Thermometer className="h-4 w-4" />}
+            icon={<div className="bg-rose-950/50 text-rose-400"><Thermometer className="h-4 w-4" /></div>}
             value={fmtNumber(tempVar, 1)}
             unit="°C"
             foot={labelFor(tempDateIso)}
@@ -672,7 +669,7 @@ export default function Dashboard() {
             <>
               <StatCard
                 title="Average Heart Rate"
-                icon={<HeartPulse className="h-4 w-4" />}
+                icon={<div className="bg-red-950/50 text-red-400"><HeartPulse className="h-4 w-4" /></div>}
                 value={avgHR != null ? Math.round(avgHR) : "—"}
                 unit="bpm"
                 foot={labelFor(heartRateDate ?? undefined)}
@@ -681,7 +678,7 @@ export default function Dashboard() {
               />
               <StatCard
                 title="Max Heart Rate"
-                icon={<HeartPulse className="h-4 w-4" />}
+                icon={<div className="bg-red-950/50 text-red-400"><HeartPulse className="h-4 w-4" /></div>}
                 value={maxHR != null ? Math.round(maxHR) : "—"}
                 unit="bpm"
                 foot={labelFor(heartRateDate ?? undefined)}
@@ -690,7 +687,7 @@ export default function Dashboard() {
               />
               <StatCard
                 title="Min Heart Rate"
-                icon={<HeartPulse className="h-4 w-4" />}
+                icon={<div className="bg-red-950/50 text-red-400"><HeartPulse className="h-4 w-4" /></div>}
                 value={minHR != null ? Math.round(minHR) : "—"}
                 unit="bpm"
                 foot={labelFor(heartRateDate ?? undefined)}
@@ -702,7 +699,7 @@ export default function Dashboard() {
             <>
               <StatCard
                 title="Resting Heart Rate (RHR)"
-                icon={<HeartPulse className="h-4 w-4" />}
+                icon={<div className="bg-red-950/50 text-red-400"><HeartPulse className="h-4 w-4" /></div>}
                 value={restingHR ?? "—"}
                 unit="bpm"
                 to="/metrics/heart-rate"
@@ -710,7 +707,7 @@ export default function Dashboard() {
               />
               <StatCard
                 title="Heart Rate Variability (HRV)"
-                icon={<HeartPulse className="h-4 w-4" />}
+                icon={<div className="bg-red-950/50 text-red-400"><HeartPulse className="h-4 w-4" /></div>}
                 value={hrv ?? "—"}
                 unit="ms"
                 to="/metrics/hrv"
