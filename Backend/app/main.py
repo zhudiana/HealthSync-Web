@@ -10,7 +10,6 @@ from app.routes import users as users_routes
 from app.core.email import EmailConfig
 from app.core.tasks import start_background_tasks
 import asyncio
-import os
 
 
 app = FastAPI()
@@ -34,6 +33,10 @@ app.add_middleware(
 async def startup_event():
     Base.metadata.create_all(bind=engine)
     
-    EmailConfig.load_from_env()
+    EmailConfig.initialize(
+        smtp_user=EmailConfig.SMTP_USER,
+        smtp_password=EmailConfig.SMTP_PASSWORD,
+        from_email=EmailConfig.FROM_EMAIL
+    )
     
     asyncio.create_task(start_background_tasks())
