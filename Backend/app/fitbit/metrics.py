@@ -1,9 +1,8 @@
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-from fastapi import APIRouter, HTTPException, Query, Depends
+from fastapi import APIRouter, HTTPException, Query
 import requests
 from sqlalchemy.orm import Session
-from app.dependencies import get_db
 from app.db.models.fitbit_account import FitbitAccount
 from app.db.models.user import User
 
@@ -231,17 +230,24 @@ def fitbit_spo2_nightly(
         if r.status_code != 200:
             raise HTTPException(status_code=r.status_code, detail=r.text)
         j = r.json() if r.headers.get("content-type","").startswith("application/json") else {}
-        arr = (j.get("spo2") or []) if isinstance(j, dict) else []
-        it = arr[0] if arr else {}
-        v = it.get("value")
-
-        # Fitbit sometimes returns "--" when no summary yet
-        if isinstance(v, dict):
-            avg = v.get("avg") 
+        
+        # Check if we have valid data
+        if isinstance(j, dict) and "value" in j and isinstance(j["value"], dict):
+            v = j["value"]
+            avg = v.get("avg")
             mn = v.get("min")
             mx = v.get("max")
         else:
-            avg = mn = mx = None
+            # Try legacy format
+            arr = (j.get("spo2") or []) if isinstance(j, dict) else []
+            it = arr[0] if arr else {}
+            v = it.get("value")
+            if isinstance(v, dict):
+                avg = v.get("avg")
+                mn = v.get("min")
+                mx = v.get("max")
+            else:
+                avg = mn = mx = None
 
         return {"date": day, "average": avg, "min": mn, "max": mx, "raw": j}
 
