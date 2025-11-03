@@ -1,11 +1,13 @@
 from datetime import datetime
 from sqlalchemy.orm import Session
 from app.db.models.user import User
+from app.db.models.hr_notification import HeartRateNotification
 from app.db.engine import SessionLocal
 from app.core.email import EmailSender
 from app.db.crud.metrics import get_heart_rate_daily
 import asyncio
 import logging
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -34,10 +36,20 @@ async def check_heart_rate_thresholds():
                 if not latest_hr:
                     continue
 
+                # Get or create notification record for this user
+                notification = db.query(HeartRateNotification).filter_by(user_id=user.id).first()
+                if not notification:
+                    notification = HeartRateNotification(
+                        id=str(uuid.uuid4()),
+                        user_id=user.id,
+                        last_notification_time=datetime.now()
+                    )
+                    db.add(notification)
+
                 # Check max threshold
                 if (user.hr_threshold_high and latest_hr["max"] and 
-                    latest_hr["max"] > user.hr_threshold_high):
-                    # High heart rate alert
+                    latest_hr["max"] > user.hr_threshold_high and
+                    latest_hr["max"] != notification.last_max_notified):  # Only if value changed
                     try:
                         EmailSender.send_hr_threshold_alert(
                             to_email=user.email,
@@ -47,14 +59,18 @@ async def check_heart_rate_thresholds():
                             threshold_value=user.hr_threshold_high,
                             timestamp=latest_hr["date"]
                         )
+                        # Update notification record
+                        notification.last_max_notified = latest_hr["max"]
+                        notification.last_notification_time = datetime.now()
+                        db.commit()
                         logger.info(f"Sent high HR alert to user {user.id}")
                     except Exception as e:
                         logger.error(f"Failed to send high HR alert to user {user.id}: {str(e)}")
 
                 # Check min threshold
                 if (user.hr_threshold_low and latest_hr["min"] and 
-                    latest_hr["min"] < user.hr_threshold_low):
-                    # Low heart rate alert
+                    latest_hr["min"] < user.hr_threshold_low and
+                    latest_hr["min"] != notification.last_min_notified):  # Only if value changed
                     try:
                         EmailSender.send_hr_threshold_alert(
                             to_email=user.email,
@@ -64,6 +80,10 @@ async def check_heart_rate_thresholds():
                             threshold_value=user.hr_threshold_low,
                             timestamp=latest_hr["date"]
                         )
+                        # Update notification record
+                        notification.last_min_notified = latest_hr["min"]
+                        notification.last_notification_time = datetime.now()
+                        db.commit()
                         logger.info(f"Sent low HR alert to user {user.id}")
                     except Exception as e:
                         logger.error(f"Failed to send low HR alert to user {user.id}: {str(e)}")

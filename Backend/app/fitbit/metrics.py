@@ -13,6 +13,19 @@ FITBIT_API = "https://api.fitbit.com"
 def _auth_headers(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
+def _handle_fitbit_response(response: requests.Response):
+    """Helper function to handle common Fitbit API response codes."""
+    if response.status_code == 401:
+        raise HTTPException(status_code=401, detail="Access token expired or invalid")
+    if response.status_code == 429:
+        raise HTTPException(
+            status_code=429, 
+            detail="Fitbit API rate limit exceeded. Please wait a minute before trying again."
+        )
+    if response.status_code != 200:
+        raise HTTPException(status_code=response.status_code, detail=response.text)
+    return response
+
 def _user_local_today(access_token: str) -> str:
     try:
         r = requests.get(f"{FITBIT_API}/1/user/-/profile.json", headers=_auth_headers(access_token), timeout=15)
@@ -46,11 +59,7 @@ def daily_summary(access_token: str, date: str = Query(default=None, description
     d = date or _user_local_today(access_token)
     url = f"{FITBIT_API}/1/user/-/activities/date/{d}.json"
     r = requests.get(url, headers=_auth_headers(access_token), timeout=30)
-    if r.status_code == 401:
-        raise HTTPException(status_code=401, detail="Access token expired or invalid")
-    if r.status_code != 200:
-        raise HTTPException(status_code=r.status_code, detail=r.text)
-
+    r = _handle_fitbit_response(r)
     data = r.json()
     summary = data.get("summary", {}) if isinstance(data, dict) else {}
     return {
@@ -81,11 +90,7 @@ def fitbit_resting_hr(access_token: str, date: str = Query(default=None, descrip
     d = date or _user_local_today(access_token)
     url = f"{FITBIT_API}/1/user/-/activities/heart/date/{d}/1d.json"
     r = requests.get(url, headers=_auth_headers(access_token), timeout=30)
-    if r.status_code == 401:
-        raise HTTPException(status_code=401, detail="Access token expired or invalid")
-    if r.status_code != 200:
-        raise HTTPException(status_code=r.status_code, detail=r.text)
-
+    r = _handle_fitbit_response(r)
     j = r.json()
     arr = j.get("activities-heart", []) if isinstance(j, dict) else []
     v = (arr[0].get("value") if arr else {}) or {}
@@ -97,11 +102,7 @@ def fitbit_sleep_summary(access_token: str, date: str = Query(default=None, desc
     d = date or _user_local_today(access_token)
     url = f"{FITBIT_API}/1.2/user/-/sleep/date/{d}.json"
     r = requests.get(url, headers=_auth_headers(access_token), timeout=30)
-    if r.status_code == 401:
-        raise HTTPException(status_code=401, detail="Access token expired or invalid")
-    if r.status_code != 200:
-        raise HTTPException(status_code=r.status_code, detail=r.text)
-
+    r = _handle_fitbit_response(r)
     j = r.json() if r.headers.get("content-type","").startswith("application/json") else {}
     s = j.get("summary", {}) if isinstance(j, dict) else {}
     mins_all = s.get("totalMinutesAsleep")
@@ -131,30 +132,47 @@ def fitbit_overview(access_token: str, date: str = Query(default=None, descripti
     d = date or _user_local_today(access_token)
 
     def _get(url):
-        rr = requests.get(url, headers=_auth_headers(access_token), timeout=30)
-        if rr.status_code != 200:
+        try:
+            rr = requests.get(url, headers=_auth_headers(access_token), timeout=30)
+            rr = _handle_fitbit_response(rr)
+            return rr.json()
+        except HTTPException as e:
+            if e.status_code == 429:  # Only re-raise rate limit errors
+                raise
             return None
-        return rr.json()
 
     daily  = _get(f"{FITBIT_API}/1/user/-/activities/date/{d}.json") or {}
     heart  = _get(f"{FITBIT_API}/1/user/-/activities/heart/date/{d}/1d.json") or {}
     sleep  = _get(f"{FITBIT_API}/1.2/user/-/sleep/date/{d}.json") or {}
-    weight = _get(f"{FITBIT_API}/1/user/-/body/log/weight/date/{d}.json") or {}
+    weight = _get(f"{FITBIT_API}/1/user/-/body/log/weight/date/{d}/3m.json") or {}
 
     summary = (daily.get("summary") or {})
     steps = summary.get("steps")
     activity_cals = summary.get("activityCalories")     # preferred (matches app)
     calories_out  = summary.get("caloriesOut")          # includes BMR
 
-    rhr = (((heart.get("activities-heart") or [])[0] or {}).get("value") or {}).get("restingHeartRate")
+    # Safely get resting heart rate with proper null checks
+    activities_heart = heart.get("activities-heart", [])
+    rhr = None
+    if activities_heart and len(activities_heart) > 0:
+        heart_data = activities_heart[0]
+        if isinstance(heart_data, dict):
+            value = heart_data.get("value")
+            if isinstance(value, dict):
+                rhr = value.get("restingHeartRate")
 
     # MAIN sleep
     logs = sleep.get("sleep", []) if isinstance(sleep, dict) else []
     mins_main = sum((log.get("minutesAsleep") or 0) for log in logs if log.get("isMainSleep"))
     sleep_hours = round(mins_main/60, 2) if mins_main else None
 
-    latest_weight = ((weight.get("weight") or [])[:1] or [None])[0]
-    weight_value = latest_weight.get("weight") if isinstance(latest_weight, dict) else None
+    # Get the latest weight from the logs
+    weight_logs = weight.get("weight", []) if isinstance(weight, dict) else []
+    weight_value = None
+    if weight_logs:
+        # Sort by date in descending order and get the most recent
+        latest_weight = sorted(weight_logs, key=lambda x: x.get("date", ""), reverse=True)[0]
+        weight_value = latest_weight.get("weight") if isinstance(latest_weight, dict) else None
 
     distances = summary.get("distances", [])
     total_km = None
@@ -167,10 +185,10 @@ def fitbit_overview(access_token: str, date: str = Query(default=None, descripti
     return {
         "date": d,
         "steps": steps,
-        "caloriesOut": calories_out,         # kept for compatibility
-        "activityCalories": activity_cals,   # <- use this on the dashboard
+        "caloriesOut": calories_out,         
+        "activityCalories": activity_cals,   
         "restingHeartRate": rhr,
-        "sleepHours": sleep_hours,           # <- main sleep hours
+        "sleepHours": sleep_hours,           
         "weight": weight_value,
         "total_km": total_km,
     }
@@ -200,11 +218,7 @@ def fitbit_weight_logs(
         url = f"{FITBIT_API}/1/user/-/body/log/weight/date/{d}/{period}.json"
 
     r = requests.get(url, headers=_auth_headers(access_token), timeout=30)
-    if r.status_code == 401:
-        raise HTTPException(status_code=401, detail="Access token expired or invalid")
-    if r.status_code != 200:
-        raise HTTPException(status_code=r.status_code, detail=r.text)
-
+    r = _handle_fitbit_response(r)
     j = r.json()
     items = j.get("weight", []) if isinstance(j, dict) else []
 
