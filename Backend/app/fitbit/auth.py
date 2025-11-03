@@ -60,7 +60,7 @@ def generate_pkce_values() -> PKCEValues:
 
 @router.get("/login")
 def login_fitbit():
-    FITBIT_SCOPES = "activity heartrate sleep temperature oxygen_saturation weight profile settings"
+    FITBIT_SCOPES = "activity heartrate sleep temperature oxygen_saturation weight profile settings respiratory_rate"
     pkce = generate_pkce_values()
 
     # Save state + code_verifier via Redis (15 min TTL)

@@ -144,7 +144,7 @@ def fitbit_overview(access_token: str, date: str = Query(default=None, descripti
     daily  = _get(f"{FITBIT_API}/1/user/-/activities/date/{d}.json") or {}
     heart  = _get(f"{FITBIT_API}/1/user/-/activities/heart/date/{d}/1d.json") or {}
     sleep  = _get(f"{FITBIT_API}/1.2/user/-/sleep/date/{d}.json") or {}
-    weight = _get(f"{FITBIT_API}/1/user/-/body/log/weight/date/{d}/3m.json") or {}
+    weight = _get(f"{FITBIT_API}/1/user/-/body/log/weight/date/{d}/7d.json") or {}
 
     summary = (daily.get("summary") or {})
     steps = summary.get("steps")
