@@ -1,10 +1,13 @@
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 import requests
 from sqlalchemy.orm import Session
 from app.db.models.fitbit_account import FitbitAccount
 from app.db.models.user import User
+from app.db.crud import steps as steps_crud
+from app.dependencies import get_db
+
 
 
 router = APIRouter(prefix="/fitbit/metrics", tags=["Fitbit Metrics"])
@@ -54,14 +57,39 @@ def _resolve_user_and_tz(db: Session, access_token: str) -> tuple[User, str]:
     return user, (acc.timezone or "UTC")
 
 
+
+
 @router.get("/summary")
-def daily_summary(access_token: str, date: str = Query(default=None, description="YYYY-MM-DD")):
+def daily_summary(access_token: str, date: str = Query(default=None, description="YYYY-MM-DD"), db: Session = Depends(get_db)):
     d = date or _user_local_today(access_token)
+    
+    # Get user and timezone info
+    user, _ = _resolve_user_and_tz(db, access_token)
+    
+    # Fetch data from Fitbit API
     url = f"{FITBIT_API}/1/user/-/activities/date/{d}.json"
     r = requests.get(url, headers=_auth_headers(access_token), timeout=30)
     r = _handle_fitbit_response(r)
     data = r.json()
     summary = data.get("summary", {}) if isinstance(data, dict) else {}
+    
+    # Save steps data to our database
+    active_minutes = (
+        (summary.get("fairlyActiveMinutes") or 0) +
+        (summary.get("veryActiveMinutes") or 0) +
+        (summary.get("lightlyActiveMinutes") or 0)
+    )
+    
+    steps_crud.update_or_create_steps(
+        db,
+        user_id=user.id,
+        provider="fitbit",
+        date_local=datetime.strptime(d, "%Y-%m-%d").date(),
+        steps=summary.get("steps"),
+        active_min=active_minutes,
+        calories=summary.get("caloriesOut")
+    )
+    
     return {
         "date": d,
         "steps": summary.get("steps"),
@@ -79,6 +107,94 @@ def daily_summary(access_token: str, date: str = Query(default=None, description
             "lightly": summary.get("lightlyActiveMinutes"),
         },
         "raw": data,  # keep for dev
+    }
+
+
+@router.get("/steps")
+def fitbit_steps(
+    access_token: str,
+    start_date: str = Query(..., description="YYYY-MM-DD"),
+    end_date: str = Query(..., description="YYYY-MM-DD"),
+    db: Session = Depends(get_db)
+):
+    """
+    Return Fitbit steps data for a date range.
+    First tries to get data from our database, then fetches missing data from Fitbit API.
+    """
+    # Resolve user from access token
+    user, _ = _resolve_user_and_tz(db, access_token)
+    
+    # Convert dates to datetime.date objects
+    start = datetime.strptime(start_date, "%Y-%m-%d").date()
+    end = datetime.strptime(end_date, "%Y-%m-%d").date()
+    
+    # Query existing data from our database
+    db_data = steps_crud.get_steps_by_date_range(
+        db,
+        user_id=user.id,
+        provider="fitbit",
+        start_date=start,
+        end_date=end
+    )
+    
+    # Create a map of existing data by date
+    data_by_date = {item.date_local.isoformat(): item for item in db_data}
+    
+    # For any missing dates, fetch from Fitbit API
+    current = start
+    while current <= end:
+        date_str = current.isoformat()
+        
+        if date_str not in data_by_date:
+            # Fetch from Fitbit API
+            try:
+                url = f"{FITBIT_API}/1/user/-/activities/date/{date_str}.json"
+                r = requests.get(url, headers=_auth_headers(access_token), timeout=30)
+                r = _handle_fitbit_response(r)
+                data = r.json()
+                summary = data.get("summary", {}) if isinstance(data, dict) else {}
+                
+                # Calculate active minutes
+                active_minutes = (
+                    (summary.get("fairlyActiveMinutes") or 0) +
+                    (summary.get("veryActiveMinutes") or 0) +
+                    (summary.get("lightlyActiveMinutes") or 0)
+                )
+                
+                # Save to database
+                db_item = steps_crud.update_or_create_steps(
+                    db,
+                    user_id=user.id,
+                    provider="fitbit",
+                    date_local=current,
+                    steps=summary.get("steps"),
+                    active_min=active_minutes,
+                    calories=summary.get("caloriesOut")
+                )
+                
+                # Add to our response data
+                data_by_date[date_str] = db_item
+                
+            except Exception as e:
+                print(f"Failed to fetch steps for {date_str}: {e}")
+                
+        current += timedelta(days=1)
+    
+    # Format the response
+    items = [
+        {
+            "date": item.date_local.isoformat(),
+            "steps": item.steps,
+            "active_minutes": item.active_min,
+            "calories": item.calories
+        }
+        for item in sorted(data_by_date.values(), key=lambda x: x.date_local)
+    ]
+    
+    return {
+        "start": start_date,
+        "end": end_date,
+        "items": items
     }
 
 
@@ -123,6 +239,44 @@ def fitbit_sleep_summary(access_token: str, date: str = Query(default=None, desc
         "raw": j,
     }
 
+
+@router.get("/steps")
+def get_steps(
+    access_token: str,
+    start_date: str = Query(..., description="YYYY-MM-DD"),
+    end_date: str = Query(..., description="YYYY-MM-DD"),
+    db: Session = Depends(get_db)
+):
+    """
+    Get steps data for a date range from the database.
+    This endpoint returns the stored steps data instead of fetching from Fitbit API.
+    """
+    user, _ = _resolve_user_and_tz(db, access_token)
+    
+    start = datetime.strptime(start_date, "%Y-%m-%d").date()
+    end = datetime.strptime(end_date, "%Y-%m-%d").date()
+    
+    steps_data = steps_crud.get_steps_by_date_range(
+        db,
+        user_id=user.id,
+        provider="fitbit",
+        start_date=start,
+        end_date=end
+    )
+    
+    return {
+        "start": start_date,
+        "end": end_date,
+        "items": [
+            {
+                "date": item.date_local.isoformat(),
+                "steps": item.steps,
+                "active_minutes": item.active_min,
+                "calories": item.calories
+            }
+            for item in steps_data
+        ]
+    }
 
 @router.get("/overview")
 def fitbit_overview(access_token: str, date: str = Query(default=None, description="YYYY-MM-DD")):
@@ -301,6 +455,22 @@ def fitbit_hrv(access_token: str,
     return {"start": start, "end": end, "items": out, "raw": j}
 
 
+# @router.get("/respiratory-rate")
+# def fitbit_breathing_rate(access_token: str,
+#                           start: str = Query(..., description="YYYY-MM-DD"),
+#                           end: str = Query(..., description="YYYY-MM-DD")):
+#     url = f"{FITBIT_API}/1/user/-/br/date/{start}/{end}.json"
+#     r = requests.get(url, headers=_auth_headers(access_token), timeout=30)
+#     if r.status_code == 401:
+#         raise HTTPException(status_code=401, detail="Access token expired or invalid")
+#     if r.status_code != 200:
+#         raise HTTPException(status_code=r.status_code, detail=r.text)
+#     j = r.json()
+#     items = (j.get("br") or []) if isinstance(j, dict) else []
+#     out = [{"date": i.get("dateTime"),
+#             "breaths_per_min": (i.get("value") or {}).get("breathingRate")} for i in items]
+#     return {"start": start, "end": end, "items": out, "raw": j}
+
 @router.get("/respiratory-rate")
 def fitbit_breathing_rate(access_token: str,
                           start: str = Query(..., description="YYYY-MM-DD"),
@@ -314,7 +484,10 @@ def fitbit_breathing_rate(access_token: str,
     j = r.json()
     items = (j.get("br") or []) if isinstance(j, dict) else []
     out = [{"date": i.get("dateTime"),
-            "breaths_per_min": (i.get("value") or {}).get("breathingRate")} for i in items]
+            "full_day_avg": (i.get("value") or {}).get("breathingRate"),  # Changed field name
+            "deep_sleep_avg": None,
+            "light_sleep_avg": None,
+            "rem_sleep_avg": None} for i in items]
     return {"start": start, "end": end, "items": out, "raw": j}
 
 
