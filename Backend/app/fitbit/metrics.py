@@ -455,21 +455,7 @@ def fitbit_hrv(access_token: str,
     return {"start": start, "end": end, "items": out, "raw": j}
 
 
-# @router.get("/respiratory-rate")
-# def fitbit_breathing_rate(access_token: str,
-#                           start: str = Query(..., description="YYYY-MM-DD"),
-#                           end: str = Query(..., description="YYYY-MM-DD")):
-#     url = f"{FITBIT_API}/1/user/-/br/date/{start}/{end}.json"
-#     r = requests.get(url, headers=_auth_headers(access_token), timeout=30)
-#     if r.status_code == 401:
-#         raise HTTPException(status_code=401, detail="Access token expired or invalid")
-#     if r.status_code != 200:
-#         raise HTTPException(status_code=r.status_code, detail=r.text)
-#     j = r.json()
-#     items = (j.get("br") or []) if isinstance(j, dict) else []
-#     out = [{"date": i.get("dateTime"),
-#             "breaths_per_min": (i.get("value") or {}).get("breathingRate")} for i in items]
-#     return {"start": start, "end": end, "items": out, "raw": j}
+
 
 @router.get("/respiratory-rate")
 def fitbit_breathing_rate(access_token: str,
