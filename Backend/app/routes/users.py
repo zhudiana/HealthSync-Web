@@ -8,7 +8,11 @@ from app.db.schemas.withings import UserRead, UserUpdate
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
-@router.get("/by-auth/{auth_user_id}", response_model=UserRead)
+@router.get(
+    "/by-auth/{auth_user_id}",
+    response_model=UserRead,
+    operation_id="get_user_by_auth_id"
+)
 def get_user_by_auth(auth_user_id: str, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.auth_user_id == auth_user_id).first()
     if not user:
@@ -16,7 +20,11 @@ def get_user_by_auth(auth_user_id: str, db: Session = Depends(get_db)):
     return user
 
 
-@router.patch("/by-auth/{auth_user_id}", response_model=UserRead)
+@router.patch(
+    "/by-auth/{auth_user_id}",
+    response_model=UserRead,
+    operation_id="update_user_by_auth_id"
+)
 def update_user_by_auth(
     auth_user_id: str,
     payload: UserUpdate,
