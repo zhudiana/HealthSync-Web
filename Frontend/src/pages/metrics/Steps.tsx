@@ -3,8 +3,9 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowLeft, RefreshCw } from "lucide-react";
 
-import { withingsStepsDaily } from "@/lib/api";
+import { withingsStepsDaily, metrics as fitbitMetrics } from "@/lib/api";
 import { tokens } from "@/lib/storage";
+import { useAuth } from "@/context/AuthContext";
 
 // recharts
 import {
@@ -17,7 +18,6 @@ import {
   CartesianGrid,
 } from "recharts";
 
-// --- tiny UI helpers ---
 function StatCard({ title, value }: { title: string; value: string | number }) {
   return (
     <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
@@ -50,8 +50,8 @@ export default function StepsPage() {
   const [dailyAverage, setDailyAverage] = useState(0);
 
   // ---------------- access token ----------------
-  const accessToken =
-    tokens.getAccess?.("withings") || tokens.getAccess?.("fitbit") || "";
+  const { provider } = useAuth();
+  const accessToken = tokens.getAccess?.(provider || "withings") || "";
 
   // ---------------- date range ----------------
   const { startYmd, endYmd, label } = useMemo(() => {
@@ -63,7 +63,9 @@ export default function StepsPage() {
     return {
       startYmd: ymdLocal(start),
       endYmd: ymdLocal(end),
-      label: `Withings · ${ymdLocal(start)} → ${ymdLocal(end)}`,
+      label: `${provider === "fitbit" ? "Fitbit" : "Withings"} · ${ymdLocal(
+        start
+      )} → ${ymdLocal(end)}`,
     };
   }, [preset]);
 
@@ -87,31 +89,88 @@ export default function StepsPage() {
         todayStr,
       });
 
-      let currentDate = new Date(startYmd + "T00:00:00"); // ensure parsed in local zone
-      const endDate = new Date(endYmd + "T00:00:00");
+      const dataMap = new Map(); // Use a map to prevent duplicate dates
 
-      while (currentDate <= endDate) {
-        const dateStr = ymdLocal(currentDate);
-        console.log("fetching dateStr =", dateStr);
-
+      if (provider === "fitbit") {
         try {
-          // Use withingsStepsDaily for all dates - it handles both cache and live data
-          const data = await withingsStepsDaily(accessToken, dateStr);
-          if (data && data.steps !== null) {
-            points.push({
-              date: dateStr,
-              steps: data.steps,
-            });
-          }
-        } catch (e) {
-          console.warn(`Failed to fetch steps data for ${dateStr}:`, e);
-        }
+          console.log("Fetching Fitbit steps for date range:", {
+            startYmd,
+            endYmd,
+          });
+          const data = await fitbitMetrics.steps(accessToken, startYmd, endYmd);
+          console.log("Fitbit steps API response:", {
+            start: data.start,
+            end: data.end,
+            itemCount: data.items.length,
+            items: data.items.map((item) => ({
+              date: item.date,
+              steps: item.steps,
+            })),
+          });
 
-        // advance by one local day
-        const next = new Date(currentDate);
-        next.setDate(currentDate.getDate() + 1);
-        currentDate = next;
+          if (!data.items?.length) {
+            console.warn("No step data received from API");
+          }
+
+          // Process each day in the range to ensure we have entries for all days
+          let currentDate = new Date(startYmd + "T00:00:00");
+          const endDate = new Date(endYmd + "T00:00:00");
+
+          while (currentDate <= endDate) {
+            const dateStr = ymdLocal(currentDate);
+            // Find matching data point or use null for steps
+            const dataPoint = data.items.find((item) => item.date === dateStr);
+
+            // Only set data if we have actual steps (including 0)
+            // This way we can distinguish between no data and actual 0 steps
+            if (dataPoint && typeof dataPoint.steps === "number") {
+              console.log(`Found steps for ${dateStr}:`, dataPoint.steps);
+              dataMap.set(dateStr, {
+                date: dateStr,
+                steps: dataPoint.steps,
+              });
+            } else {
+              console.log(`No steps data for ${dateStr}`);
+            }
+
+            // Move to next day
+            currentDate.setDate(currentDate.getDate() + 1);
+          }
+
+          // Log the final processed data
+          console.log("Processed steps data:", Array.from(dataMap.entries()));
+        } catch (e) {
+          console.warn("Failed to fetch Fitbit steps:", e);
+        }
+      } else {
+        let currentDate = new Date(startYmd + "T00:00:00"); // ensure parsed in local zone
+        const endDate = new Date(endYmd + "T00:00:00");
+
+        while (currentDate <= endDate) {
+          const dateStr = ymdLocal(currentDate);
+          console.log("fetching dateStr =", dateStr);
+
+          try {
+            const data = await withingsStepsDaily(accessToken, dateStr);
+            if (data && data.steps !== null) {
+              dataMap.set(dateStr, {
+                date: dateStr,
+                steps: data.steps,
+              });
+            }
+          } catch (e) {
+            console.warn(`Failed to fetch steps data for ${dateStr}:`, e);
+          }
+
+          // advance by one local day
+          const next = new Date(currentDate);
+          next.setDate(currentDate.getDate() + 1);
+          currentDate = next;
+        }
       }
+
+      // Convert map to array and ensure chronological order
+      points.push(...Array.from(dataMap.values()));
 
       // Sort points by date
       points.sort((a, b) => a.date.localeCompare(b.date));

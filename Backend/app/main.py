@@ -21,8 +21,8 @@ app.include_router(users_routes.router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[  
-        "http://localhost:8080",
-        # "https://health-sync-web.vercel.app"
+        # "http://localhost:8080",
+        "https://health-sync-web.vercel.app"
         ],
     allow_credentials=True,
     allow_methods=["*"],

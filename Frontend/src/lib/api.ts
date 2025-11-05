@@ -211,21 +211,61 @@ export const metrics = {
     };
   },
 
-  distance: async (token: string, date?: string) => {
-    // NEW
-    const u = new URL(`${API_BASE_URL}/fitbit/metrics/distance`); // NEW
-    u.searchParams.set("access_token", token); // NEW
-    if (date) u.searchParams.set("date", date); // NEW
-    const r = await fetch(u.toString()); // NEW
-    const d = await r.json(); // NEW
-    if (!r.ok) throw new Error(d?.detail || "distance failed"); // NEW
+  respiratoryRate: async (token: string, start: string, end: string) => {
+    const u = new URL(`${API_BASE_URL}/fitbit/metrics/respiratory-rate`);
+    u.searchParams.set("access_token", token);
+    u.searchParams.set("start", start);
+    u.searchParams.set("end", end);
+    const r = await fetch(u.toString());
+    const d = await r.json();
+    if (!r.ok) throw new Error(d?.detail || "respiratory rate failed");
     return d as {
-      // NEW
-      date: string; // NEW
-      total_km: number | null; // NEW
-      distances: { activity: string; distance: number }[]; // NEW
-      raw?: unknown; // NEW
-    }; // NEW
+      start: string;
+      end: string;
+      items: {
+        date: string;
+        full_day_avg: number | null;
+        deep_sleep_avg: number | null;
+        light_sleep_avg: number | null;
+        rem_sleep_avg: number | null;
+      }[];
+      raw?: unknown;
+    };
+  },
+
+  steps: async (token: string, start: string, end: string) => {
+    const u = new URL(`${API_BASE_URL}/fitbit/metrics/steps`);
+    u.searchParams.set("access_token", token);
+    u.searchParams.set("start_date", start);
+    u.searchParams.set("end_date", end);
+    const r = await fetch(u.toString());
+    const d = await r.json();
+    if (!r.ok) throw new Error(d?.detail || "Failed to fetch steps data");
+    return d as {
+      start: string;
+      end: string;
+      items: {
+        date: string;
+        steps: number;
+        active_minutes?: number;
+        calories?: number;
+      }[];
+    };
+  },
+
+  distance: async (token: string, date?: string) => {
+    const u = new URL(`${API_BASE_URL}/fitbit/metrics/distance`);
+    u.searchParams.set("access_token", token);
+    if (date) u.searchParams.set("date", date);
+    const r = await fetch(u.toString());
+    const d = await r.json();
+    if (!r.ok) throw new Error(d?.detail || "distance failed");
+    return d as {
+      date: string;
+      total_km: number | null;
+      distances: { activity: string; distance: number }[];
+      raw?: unknown;
+    };
   },
 };
 

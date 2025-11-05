@@ -193,12 +193,15 @@ export default function AverageHeartRate() {
       let currentDate = new Date(dateFrom);
       const endDate = new Date(dateTo);
 
+      // Create a Map to store unique data points by date
+      const dataMap = new Map();
+
       // Pre-fetch today's data first to ensure it's fresh
       const todayStr = formatDate(new Date());
       try {
         const todayData = await withingsHeartRateDaily(accessToken, todayStr);
         if (todayData?.hr_average !== null) {
-          dailyData.push({
+          dataMap.set(todayStr, {
             date: todayStr,
             avg_bpm: todayData.hr_average,
             min_bpm: todayData.hr_min,
@@ -211,6 +214,12 @@ export default function AverageHeartRate() {
 
       while (currentDate <= endDate) {
         const dateStr = formatDate(currentDate);
+
+        // Skip if we already have data for this date
+        if (dataMap.has(dateStr)) {
+          currentDate.setDate(currentDate.getDate() + 1);
+          continue;
+        }
 
         // Try to get cached data first
         let data;
@@ -233,7 +242,7 @@ export default function AverageHeartRate() {
         }
 
         if (data && data.hr_average !== null) {
-          dailyData.push({
+          dataMap.set(dateStr, {
             date: dateStr,
             avg_bpm: data.hr_average,
             min_bpm: data.hr_min,
@@ -244,9 +253,10 @@ export default function AverageHeartRate() {
         currentDate.setDate(currentDate.getDate() + 1);
       }
 
-      // Sort by date
-      dailyData.sort((a, b) => a.date.localeCompare(b.date));
-      setSeries(dailyData);
+      // Convert Map to array and sort by date
+      const uniqueDailyData = Array.from(dataMap.values());
+      uniqueDailyData.sort((a, b) => a.date.localeCompare(b.date));
+      setSeries(uniqueDailyData);
     } catch (e: any) {
       console.error(e);
       setError(e?.message || "Failed to load heart rate data");

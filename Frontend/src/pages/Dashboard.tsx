@@ -9,6 +9,7 @@ import {
   Droplets,
   TrendingUp,
   RefreshCw,
+  Wind,
   Loader2,
   ChevronRight,
 } from "lucide-react";
@@ -65,7 +66,10 @@ function StatCard({
         ].join(" ")}
       >
         <div className="flex items-center justify-between pb-2">
-          <div className="text-sm font-medium text-zinc-300">{title}</div>
+          <div className="flex items-center gap-2 text-zinc-300">
+            {icon}
+            <div className="text-sm font-medium text-zinc-300">{title}</div>
+          </div>
           {pulse && (
             <span
               className="inline-flex h-2 w-2 rounded-full bg-emerald-400 animate-pulse"
@@ -75,7 +79,7 @@ function StatCard({
         </div>
 
         <div className="pt-0">
-          <div className="flex items-center justify-between gap-4">
+          <div className="flex items-end justify-between gap-4">
             <div>
               <div className="text-3xl font-semibold text-white min-h-[2.25rem] flex items-center">
                 {/* value / spinner */}
@@ -97,14 +101,14 @@ function StatCard({
                 <div className="mt-1 text-xs text-zinc-400">{foot}</div>
               ) : null}
             </div>
-            <div className="flex items-center gap-3">
-              <div className="h-12 w-12 rounded-full bg-sky-950/50 flex items-center justify-center text-sky-400">
-                {cloneElement(icon, { className: 'h-6 w-6' })}
-              </div>
-              {to && (
-                <ChevronRight className="h-5 w-5 text-zinc-600 group-hover:text-zinc-400 transition-colors" />
-              )}
-            </div>
+            {to && (
+              <span
+                className="text-xs text-zinc-500 opacity-0 group-hover:opacity-100 transition"
+                aria-hidden
+              >
+                View details →
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -148,6 +152,7 @@ export default function Dashboard() {
   const [minHR, setMinHR] = useState<number | null>(null);
   const [ecgHR, setEcgHR] = useState<number | null>(null);
   const [ecgTime, setEcgTime] = useState<string | null>(null);
+  const [respiratoryRate, setRespiratoryRate] = useState<number | null>(null);
 
   const [dbDisplayName, setDbDisplayName] = useState<string | null>(null);
 
@@ -172,7 +177,8 @@ export default function Dashboard() {
       | "avgHR"
       | "maxHR"
       | "minHR"
-      | "ecg",
+      | "ecg"
+      | "respiratoryRate",
       boolean
     >
   >({
@@ -189,6 +195,7 @@ export default function Dashboard() {
     maxHR: true,
     minHR: true,
     ecg: true,
+    respiratoryRate: true,
   });
 
   const setLoad = (key: keyof typeof loading, val: boolean) =>
@@ -315,6 +322,10 @@ export default function Dashboard() {
             setDistance(ov.total_km ?? null);
             setDistanceDate(ov.date ?? null);
             setLoad("distance", false);
+
+            // Set weight from overview endpoint
+            setWeight(ov.weight ?? null);
+            setLoad("weight", false);
           } catch {
             setLoad("steps", false);
             setLoad("calories", false);
@@ -395,6 +406,33 @@ export default function Dashboard() {
             setLoad("temperature", false);
           }
 
+          // Resting Heart Rate
+          try {
+            const hr = await fitbitMetrics.restingHR(access);
+            if (mounted) {
+              setRestingHR(hr.restingHeartRate ?? null);
+            }
+          } finally {
+            setLoad("restingHR", false);
+          }
+
+          // Respiratory Rate
+          try {
+            const todayStr = ymd();
+            const resp = await fitbitMetrics.respiratoryRate(
+              access,
+              todayStr,
+              todayStr
+            );
+            if (mounted) {
+              // Get the latest reading from the items array
+              const latestReading = resp?.items?.[resp.items.length - 1];
+              setRespiratoryRate(latestReading?.full_day_avg ?? null);
+            }
+          } finally {
+            setLoad("respiratoryRate", false);
+          }
+
           // Token info (optional)
           try {
             const i = await tokenInfo(access);
@@ -403,12 +441,9 @@ export default function Dashboard() {
             /* ignore */
           }
 
-          // resting HR (from overview/fitbit profile not shown separately on fitbit path)
-          setLoad("restingHR", false);
           setLoad("avgHR", false);
           setLoad("maxHR", false);
           setLoad("minHR", false);
-          setLoad("weight", false);
           setLoad("ecg", false);
         } else {
           // WITHINGS
@@ -466,17 +501,42 @@ export default function Dashboard() {
             })
             .finally(() => setLoad("temperature", false));
 
-          // ECG latest
-          withingsECG(access, undefined, undefined, "Europe/Rome", 1)
-            .then((e) => {
+          // Try to get ECG data with progressive fallback
+          const endDate = ymd();
+          const thirtyDaysAgo = new Date();
+          thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+          const startDate = ymd(thirtyDaysAgo);
+
+          // First try with 30 days window
+          withingsECG(access, startDate, endDate, "Europe/Rome", 1)
+            .then(async (e) => {
               if (!mounted) return;
+
               if (e?.latest) {
                 setEcgHR(e.latest.heart_rate ?? null);
                 setEcgTime(e.latest.time_iso ?? null);
               } else {
-                setEcgHR(null);
-                setEcgTime(null);
+                // If no data in last 30 days, try getting the latest reading without date constraints
+
+                const latestData = await withingsECG(
+                  access,
+                  undefined,
+                  undefined,
+                  "Europe/Rome",
+                  1
+                );
+
+                if (latestData?.latest) {
+                  setEcgHR(latestData.latest.heart_rate ?? null);
+                  setEcgTime(latestData.latest.time_iso ?? null);
+                } else {
+                  setEcgHR(null);
+                  setEcgTime(null);
+                }
               }
+            })
+            .catch((error) => {
+              console.error("Error fetching ECG:", error);
             })
             .finally(() => setLoad("ecg", false));
 
@@ -591,7 +651,7 @@ export default function Dashboard() {
         <section className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
           <StatCard
             title="Weight"
-            icon={<div className="bg-purple-950/50 text-purple-400"><Gauge className="h-4 w-4" /></div>}
+            icon={<Gauge className="h-4 w-4" />}
             value={fmtKg(weight)}
             unit="kg"
             foot="Latest"
@@ -601,7 +661,7 @@ export default function Dashboard() {
 
           <StatCard
             title="Distance"
-            icon={<div className="bg-emerald-950/50 text-emerald-400"><Activity className="h-4 w-4" /></div>}
+            icon={<Activity className="h-4 w-4" />}
             value={distance != null ? Number(distance).toFixed(2) : "—"}
             unit="km"
             foot={labelFor(distanceDate)}
@@ -611,7 +671,7 @@ export default function Dashboard() {
 
           <StatCard
             title="Steps"
-            icon={<div className="bg-blue-950/50 text-blue-400"><TrendingUp className="h-4 w-4" /></div>}
+            icon={<TrendingUp className="h-4 w-4" />}
             value={steps ?? "—"}
             unit={labelFor(stepsDate)}
             pulse
@@ -623,14 +683,14 @@ export default function Dashboard() {
             <>
               <StatCard
                 title="Sleep (total)"
-                icon={<div className="bg-indigo-950/50 text-indigo-400"><Watch className="h-4 w-4" /></div>}
+                icon={<Watch className="h-4 w-4" />}
                 value={fmtHMFromHours(sleepHours)}
                 to="/metrics/sleep"
                 loading={loading.sleep}
               />
               <StatCard
                 title="Calories"
-                icon={<div className="bg-orange-950/50 text-orange-400"><Activity className="h-4 w-4" /></div>}
+                icon={<Activity className="h-4 w-4" />}
                 value={calories ?? "—"}
                 unit={labelFor(caloriesDate)}
                 to="/metrics/calories"
@@ -646,7 +706,7 @@ export default function Dashboard() {
                 ? "Oxygen Saturation (SpO₂)"
                 : "Blood Oxygen (SpO₂)"
             }
-            icon={<div className="bg-cyan-950/50 text-cyan-400"><Droplets className="h-4 w-4" /></div>}
+            icon={<Droplets className="h-4 w-4" />}
             value={fmtNumber(spo2, 1)}
             unit="%"
             foot={labelFor(spo2DateIso)}
@@ -657,7 +717,7 @@ export default function Dashboard() {
           {/* Temperature with date in foot */}
           <StatCard
             title={tempLabel}
-            icon={<div className="bg-rose-950/50 text-rose-400"><Thermometer className="h-4 w-4" /></div>}
+            icon={<Thermometer className="h-4 w-4" />}
             value={fmtNumber(tempVar, 1)}
             unit="°C"
             foot={labelFor(tempDateIso)}
@@ -669,7 +729,7 @@ export default function Dashboard() {
             <>
               <StatCard
                 title="Average Heart Rate"
-                icon={<div className="bg-red-950/50 text-red-400"><HeartPulse className="h-4 w-4" /></div>}
+                icon={<HeartPulse className="h-4 w-4" />}
                 value={avgHR != null ? Math.round(avgHR) : "—"}
                 unit="bpm"
                 foot={labelFor(heartRateDate ?? undefined)}
@@ -678,7 +738,7 @@ export default function Dashboard() {
               />
               <StatCard
                 title="Max Heart Rate"
-                icon={<div className="bg-red-950/50 text-red-400"><HeartPulse className="h-4 w-4" /></div>}
+                icon={<HeartPulse className="h-4 w-4" />}
                 value={maxHR != null ? Math.round(maxHR) : "—"}
                 unit="bpm"
                 foot={labelFor(heartRateDate ?? undefined)}
@@ -687,7 +747,7 @@ export default function Dashboard() {
               />
               <StatCard
                 title="Min Heart Rate"
-                icon={<div className="bg-red-950/50 text-red-400"><HeartPulse className="h-4 w-4" /></div>}
+                icon={<HeartPulse className="h-4 w-4" />}
                 value={minHR != null ? Math.round(minHR) : "—"}
                 unit="bpm"
                 foot={labelFor(heartRateDate ?? undefined)}
@@ -699,7 +759,7 @@ export default function Dashboard() {
             <>
               <StatCard
                 title="Resting Heart Rate (RHR)"
-                icon={<div className="bg-red-950/50 text-red-400"><HeartPulse className="h-4 w-4" /></div>}
+                icon={<HeartPulse className="h-4 w-4" />}
                 value={restingHR ?? "—"}
                 unit="bpm"
                 to="/metrics/heart-rate"
@@ -707,7 +767,7 @@ export default function Dashboard() {
               />
               <StatCard
                 title="Heart Rate Variability (HRV)"
-                icon={<div className="bg-red-950/50 text-red-400"><HeartPulse className="h-4 w-4" /></div>}
+                icon={<HeartPulse className="h-4 w-4" />}
                 value={hrv ?? "—"}
                 unit="ms"
                 to="/metrics/hrv"
@@ -716,7 +776,7 @@ export default function Dashboard() {
             </>
           )}
 
-          {provider === "withings" && (
+          {provider === "withings" ? (
             <StatCard
               title="ECG (Latest)"
               icon={<HeartPulse className="h-4 w-4" />}
@@ -731,6 +791,19 @@ export default function Dashboard() {
               }
               to="/metrics/ecg"
               loading={loading.ecg}
+            />
+          ) : (
+            <StatCard
+              title="Breathing Rate"
+              icon={<Wind className="h-4 w-4" />}
+              value={
+                respiratoryRate != null
+                  ? Number(respiratoryRate).toFixed(1)
+                  : "—"
+              }
+              unit="breaths/min"
+              foot="Daily Average"
+              loading={loading.respiratoryRate}
             />
           )}
         </section>
