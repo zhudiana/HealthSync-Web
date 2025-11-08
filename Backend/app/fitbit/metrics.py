@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from fastapi import APIRouter, HTTPException, Query, Depends
 import requests
@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.db.models.fitbit_account import FitbitAccount
 from app.db.models.user import User
 from app.db.crud import steps as steps_crud
+from app.db.crud import weights as weights_crud
 from app.dependencies import get_db
 
 
@@ -354,13 +355,15 @@ def fitbit_weight_logs(
     date: str = Query(default=None, description="YYYY-MM-DD (default: today)"),
     period: str = Query(default="1m", description="One of: 1d,7d,30d,1w,1m,3m,6m,1y,max"),
     end: str | None = Query(default=None, description="YYYY-MM-DD (use this to request a date range instead of a period)"),
+    db: Session = Depends(get_db)
 ):
     """
-    Return Fitbit *available weight logs*.
+    Return Fitbit weight logs and store them in our database.
     - If `end` is provided, uses the date-range endpoint.
     - Otherwise uses the date+period endpoint.
-    Response mirrors Fitbit's `weight` array; no extra logic.
     """
+    # Resolve user from access token
+    user, tz = _resolve_user_and_tz(db, access_token)
     d = date or _user_local_today(access_token)
 
     allowed = {"1d","7d","30d","1w","1m","3m","6m","1y","max"}
@@ -376,12 +379,54 @@ def fitbit_weight_logs(
     j = r.json()
     items = j.get("weight", []) if isinstance(j, dict) else []
 
+    # Store weight readings in our database
+    processed_items = []
+    for item in items:
+        # Convert Fitbit's timestamp to UTC
+        log_id = str(item.get("logId"))
+        date_str = item.get("date")
+        time_str = item.get("time", "00:00:00")
+        try:
+            # Parse the local time
+            local_dt = datetime.fromisoformat(f"{date_str}T{time_str}")
+            # Get timezone offset from the item or use user's timezone
+            tz_offset_min = item.get("timeZoneOffset", 0) * 60  # Fitbit uses hours, we use minutes
+            
+            # Convert to UTC
+            utc_dt = local_dt - timedelta(minutes=tz_offset_min)
+            utc_dt = utc_dt.replace(tzinfo=timezone.utc)
+
+            # Store in database
+            reading = weights_crud.update_or_create_weight(
+                db,
+                user_id=user.id,
+                provider="fitbit",
+                measured_at_utc=utc_dt,
+                weight_kg=item.get("weight"),
+                fat_pct=item.get("fat"),
+                provider_measure_id=log_id,
+                device=item.get("source"),
+                tz_offset_min=tz_offset_min
+            )
+            
+            processed_items.append({
+                "date": date_str,
+                "time": time_str,
+                "weight": reading.weight_kg,
+                "fat": reading.fat_pct,
+                "source": reading.device,
+                "logId": reading.provider_measure_id
+            })
+        except Exception as e:
+            print(f"Failed to process weight reading: {e}")
+            continue
+
     return {
         "date": d,
         "period": None if end else period,
         "end": end,
-        "count": len(items),
-        "items": items,   # direct Fitbit logs
+        "count": len(processed_items),
+        "items": processed_items
     }
 
 
@@ -453,8 +498,6 @@ def fitbit_hrv(access_token: str,
     out = [{"date": i.get("dateTime"),
             "rmssd_ms": (i.get("value") or {}).get("dailyRmssd")} for i in items]
     return {"start": start, "end": end, "items": out, "raw": j}
-
-
 
 
 @router.get("/respiratory-rate")
