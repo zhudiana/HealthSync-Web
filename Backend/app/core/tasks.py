@@ -5,11 +5,50 @@ from app.db.models.hr_notification import HeartRateNotification
 from app.db.engine import SessionLocal
 from app.core.email import EmailSender
 from app.db.crud.metrics import get_heart_rate_daily
+from app.core.celery_app import celery_app
 import asyncio
 import logging
 import uuid
 
 logger = logging.getLogger(__name__)
+
+@celery_app.task(name="send_hr_threshold_alert")
+def send_hr_threshold_alert_task(
+    to_email: str,
+    user_name: str,
+    heart_rate: float,
+    threshold_type: str,
+    threshold_value: float,
+    timestamp: str
+) -> bool:
+    """
+    Celery task to send heart rate threshold alert emails asynchronously.
+    """
+    return EmailSender.send_hr_threshold_alert(
+        to_email=to_email,
+        user_name=user_name,
+        heart_rate=heart_rate,
+        threshold_type=threshold_type,
+        threshold_value=threshold_value,
+        timestamp=timestamp
+    )
+
+@celery_app.task(name="send_email")
+def send_email_task(
+    to_email: str,
+    subject: str,
+    html_content: str,
+    text_content: str = None
+) -> bool:
+    """
+    Celery task to send generic emails asynchronously.
+    """
+    return EmailSender.send_email(
+        to_email=to_email,
+        subject=subject,
+        html_content=html_content,
+        text_content=text_content
+    )
 
 async def check_heart_rate_thresholds():
     """
@@ -51,13 +90,13 @@ async def check_heart_rate_thresholds():
                     latest_hr["max"] > user.hr_threshold_high and
                     latest_hr["max"] != notification.last_max_notified):  # Only if value changed
                     try:
-                        EmailSender.send_hr_threshold_alert(
+                        send_hr_threshold_alert_task.delay(
                             to_email=user.email,
                             user_name=user.display_name or "User",
                             heart_rate=latest_hr["max"],
                             threshold_type="high",
                             threshold_value=user.hr_threshold_high,
-                            timestamp=latest_hr["date"]
+                            timestamp=latest_hr["timestamp"]
                         )
                         # Update notification record
                         notification.last_max_notified = latest_hr["max"]
@@ -72,13 +111,13 @@ async def check_heart_rate_thresholds():
                     latest_hr["min"] < user.hr_threshold_low and
                     latest_hr["min"] != notification.last_min_notified):  # Only if value changed
                     try:
-                        EmailSender.send_hr_threshold_alert(
+                        send_hr_threshold_alert_task.delay(
                             to_email=user.email,
                             user_name=user.display_name or "User",
                             heart_rate=latest_hr["min"],
                             threshold_type="low",
                             threshold_value=user.hr_threshold_low,
-                            timestamp=latest_hr["date"]
+                            timestamp=latest_hr["timestamp"]
                         )
                         # Update notification record
                         notification.last_min_notified = latest_hr["min"]

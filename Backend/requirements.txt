@@ -48,6 +48,7 @@ PyYAML==6.0.2
 redis==6.4.0
 requests==2.32.4
 rich==14.0.0
+celery==5.3.6
 rich-toolkit==0.14.8
 rignore==0.6.2
 rsa==4.9.1
