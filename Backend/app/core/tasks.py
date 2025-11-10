@@ -5,12 +5,14 @@ from app.db.models.hr_notification import HeartRateNotification
 from app.db.engine import SessionLocal
 from app.core.email import EmailSender
 from app.db.crud.metrics import get_heart_rate_daily
+from app.core.celery_app import celery_app
 import asyncio
 import logging
 import uuid
 
 logger = logging.getLogger(__name__)
 
+@celery_app.task(name="send_hr_threshold_alert")
 def send_hr_threshold_alert_task(
     to_email: str,
     user_name: str,
@@ -20,7 +22,7 @@ def send_hr_threshold_alert_task(
     timestamp: str
 ) -> bool:
     """
-    Send heart rate threshold alert emails synchronously.
+    Celery task to send heart rate threshold alert emails asynchronously.
     """
     try:
         result = EmailSender.send_hr_threshold_alert(
@@ -37,6 +39,7 @@ def send_hr_threshold_alert_task(
         logger.error(f"Error sending email to {to_email}: {str(e)}")
         raise
 
+@celery_app.task(name="send_email")
 def send_email_task(
     to_email: str,
     subject: str,
@@ -44,7 +47,7 @@ def send_email_task(
     text_content: str = None
 ) -> bool:
     """
-    Send generic emails synchronously.
+    Celery task to send generic emails asynchronously.
     """
     return EmailSender.send_email(
         to_email=to_email,
@@ -126,8 +129,8 @@ def check_heart_rate_thresholds():
                             try:
                                 logger.info(f"🚨 Triggering high HR alert for user {user.id} - HR: {latest_hr['max']} > threshold: {user.hr_threshold_high}")
                                 
-                                # Send email synchronously
-                                send_hr_threshold_alert_task(
+                                # Send email via Celery
+                                send_hr_threshold_alert_task.delay(
                                     to_email=user.email,
                                     user_name=user.display_name or "User",
                                     heart_rate=float(latest_hr["max"]),
@@ -140,7 +143,7 @@ def check_heart_rate_thresholds():
                                 notification.last_max_notified = latest_hr["max"]
                                 notification.last_notification_time = datetime.now()
                                 db.commit()
-                                logger.info(f"✅ Successfully sent high HR alert for user {user.id}")
+                                logger.info(f"✅ Successfully queued high HR alert for user {user.id}")
                             except Exception as e:
                                 logger.error(f"❌ Failed to send high HR alert to user {user.id}: {str(e)}", exc_info=True)
                                 db.rollback()
@@ -162,7 +165,7 @@ def check_heart_rate_thresholds():
                             try:
                                 logger.info(f"🚨 Triggering low HR alert for user {user.id} - HR: {latest_hr['min']} < threshold: {user.hr_threshold_low}")
                                 
-                                send_hr_threshold_alert_task(
+                                send_hr_threshold_alert_task.delay(
                                     to_email=user.email,
                                     user_name=user.display_name or "User",
                                     heart_rate=float(latest_hr["min"]),
@@ -174,7 +177,7 @@ def check_heart_rate_thresholds():
                                 notification.last_min_notified = latest_hr["min"]
                                 notification.last_notification_time = datetime.now()
                                 db.commit()
-                                logger.info(f"✅ Successfully sent low HR alert for user {user.id}")
+                                logger.info(f"✅ Successfully queued low HR alert for user {user.id}")
                             except Exception as e:
                                 logger.error(f"❌ Failed to send low HR alert to user {user.id}: {str(e)}", exc_info=True)
                                 db.rollback()
