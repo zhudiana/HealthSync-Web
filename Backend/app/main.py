@@ -10,6 +10,13 @@ from app.routes import users as users_routes
 from app.core.email import EmailConfig
 from app.core.tasks import start_background_tasks
 import asyncio
+import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 
 
 app = FastAPI()
@@ -28,6 +35,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+
 
 @app.on_event("startup")
 async def startup_event():

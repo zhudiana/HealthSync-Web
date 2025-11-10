@@ -1,5 +1,6 @@
 from typing import Optional
 import smtplib
+import logging
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from fastapi import HTTPException
@@ -41,13 +42,37 @@ class EmailSender:
         Raises:
             HTTPException: If email configuration is not set or if sending fails
         """
-        if not all([EmailConfig.SMTP_USER, EmailConfig.SMTP_PASSWORD]):
-            raise HTTPException(
-                status_code=500,
-                detail="Email configuration not initialized"
-            )
+        logger = logging.getLogger(__name__)
+        logger.info(f"=" * 80)
+        logger.info(f"📧 EMAIL SEND REQUEST")
+        logger.info(f"To: {to_email}")
+        logger.info(f"Subject: {subject}")
+        logger.info(f"SMTP Config:")
+        logger.info(f"  Host: {EmailConfig.SMTP_HOST}")
+        logger.info(f"  Port: {EmailConfig.SMTP_PORT}")
+        logger.info(f"  User: {EmailConfig.SMTP_USER}")
+        logger.info(f"  From: {EmailConfig.FROM_EMAIL}")
+        logger.info(f"  Password set: {'Yes' if EmailConfig.SMTP_PASSWORD else 'No'}")
+        logger.info(f"=" * 80)
+        
+        # Validate configuration
+        if not EmailConfig.SMTP_USER:
+            error_msg = "SMTP_USER is not set"
+            logger.error(f"❌ {error_msg}")
+            raise HTTPException(status_code=500, detail=error_msg)
+            
+        if not EmailConfig.SMTP_PASSWORD:
+            error_msg = "SMTP_PASSWORD is not set"
+            logger.error(f"❌ {error_msg}")
+            raise HTTPException(status_code=500, detail=error_msg)
+            
+        if not EmailConfig.SMTP_HOST:
+            error_msg = "SMTP_HOST is not set"
+            logger.error(f"❌ {error_msg}")
+            raise HTTPException(status_code=500, detail=error_msg)
 
         # Create message
+        logger.info("📝 Creating email message...")
         message = MIMEMultipart("alternative")
         message["Subject"] = subject
         message["From"] = EmailConfig.FROM_EMAIL
@@ -56,25 +81,55 @@ class EmailSender:
         # Add plain text version (if provided)
         if text_content:
             message.attach(MIMEText(text_content, "plain"))
+            logger.info("✅ Added plain text content")
 
         # Add HTML version
         message.attach(MIMEText(html_content, "html"))
+        logger.info("✅ Added HTML content")
 
         try:
-            # Create SMTP connection
-            with smtplib.SMTP(EmailConfig.SMTP_HOST, EmailConfig.SMTP_PORT) as server:
-                server.starttls()  # Enable TLS
-                server.login(EmailConfig.SMTP_USER, EmailConfig.SMTP_PASSWORD)
-                
-                # Send email
-                server.send_message(message)
-                return True
+            logger.info(f"🔌 Connecting to SMTP server {EmailConfig.SMTP_HOST}:{EmailConfig.SMTP_PORT}...")
+            
+            # Create SMTP connection with timeout
+            server = smtplib.SMTP(EmailConfig.SMTP_HOST, EmailConfig.SMTP_PORT, timeout=30)
+            logger.info("✅ Connected to SMTP server")
+            
+            # Enable debug output
+            server.set_debuglevel(1)
+            
+            logger.info("🔒 Starting TLS...")
+            server.starttls()
+            logger.info("✅ TLS enabled")
+            
+            logger.info(f"🔑 Logging in as {EmailConfig.SMTP_USER}...")
+            server.login(EmailConfig.SMTP_USER, EmailConfig.SMTP_PASSWORD)
+            logger.info("✅ Login successful")
+            
+            logger.info(f"📤 Sending message from {EmailConfig.FROM_EMAIL} to {to_email}...")
+            server.send_message(message)
+            logger.info("✅ Message sent successfully")
+            
+            server.quit()
+            logger.info("✅ Connection closed")
+            logger.info("🎉 EMAIL SENT SUCCESSFULLY!")
+            logger.info("=" * 80)
+            
+            return True
 
+        except smtplib.SMTPAuthenticationError as e:
+            error_msg = f"SMTP Authentication failed: {str(e)}"
+            logger.error(f"❌ {error_msg}")
+            raise HTTPException(status_code=500, detail=error_msg)
+            
+        except smtplib.SMTPException as e:
+            error_msg = f"SMTP error occurred: {str(e)}"
+            logger.error(f"❌ {error_msg}")
+            raise HTTPException(status_code=500, detail=error_msg)
+            
         except Exception as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to send email: {str(e)}"
-            )
+            error_msg = f"Unexpected error sending email: {str(e)}"
+            logger.error(f"❌ {error_msg}", exc_info=True)
+            raise HTTPException(status_code=500, detail=error_msg)
 
     @staticmethod
     def send_hr_threshold_alert(
@@ -99,6 +154,12 @@ class EmailSender:
         Returns:
             bool: True if email was sent successfully
         """
+        logger = logging.getLogger(__name__)
+        logger.info(f"🏥 Preparing HR threshold alert email")
+        logger.info(f"  User: {user_name}")
+        logger.info(f"  Type: {threshold_type}")
+        logger.info(f"  HR: {heart_rate} vs Threshold: {threshold_value}")
+        
         subject = f"HealthSync Heart Rate Alert - {threshold_type.title()} Heart Rate Detected"
         
         html_content = f"""

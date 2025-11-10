@@ -1,5 +1,10 @@
+# worker.py - UPDATED
 from app.core.celery_app import celery_app
+import logging
 
-# This file is used by Render.com to run the Celery worker
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 if __name__ == '__main__':
-    celery_app.worker_main(['worker', '--loglevel=info'])
+    logger.info("🚀 Starting Celery worker...")
+    celery_app.start(argv=['worker', '--loglevel=info', '--concurrency=2'])
