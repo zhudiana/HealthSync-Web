@@ -5,11 +5,9 @@ from app.db.models.hr_notification import HeartRateNotification
 from app.db.engine import SessionLocal
 from app.core.email import EmailSender
 from app.db.crud.metrics import get_heart_rate_daily
-from app.core.celery_app import celery_app
 import asyncio
 import uuid
 
-@celery_app.task(name="send_hr_threshold_alert")
 def send_hr_threshold_alert_task(
     to_email: str,
     user_name: str,
@@ -19,7 +17,7 @@ def send_hr_threshold_alert_task(
     timestamp: str
 ) -> bool:
     """
-    Celery task to send heart rate threshold alert emails asynchronously.
+    Send heart rate threshold alert emails synchronously.
     """
     return EmailSender.send_hr_threshold_alert(
         to_email=to_email,
@@ -30,7 +28,6 @@ def send_hr_threshold_alert_task(
         timestamp=timestamp
     )
 
-@celery_app.task(name="send_email")
 def send_email_task(
     to_email: str,
     subject: str,
@@ -38,7 +35,7 @@ def send_email_task(
     text_content: str = None
 ) -> bool:
     """
-    Celery task to send generic emails asynchronously.
+    Send generic emails synchronously.
     """
     return EmailSender.send_email(
         to_email=to_email,
@@ -97,7 +94,7 @@ def check_heart_rate_thresholds():
                         
                         if is_new_violation:
                             try:
-                                send_hr_threshold_alert_task.delay(
+                                send_hr_threshold_alert_task(
                                     to_email=user.email,
                                     user_name=user.display_name or "User",
                                     heart_rate=float(latest_hr["max"]),
@@ -123,7 +120,7 @@ def check_heart_rate_thresholds():
                         
                         if is_new_violation:
                             try:
-                                send_hr_threshold_alert_task.delay(
+                                send_hr_threshold_alert_task(
                                     to_email=user.email,
                                     user_name=user.display_name or "User",
                                     heart_rate=float(latest_hr["min"]),

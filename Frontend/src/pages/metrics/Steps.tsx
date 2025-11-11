@@ -1,7 +1,7 @@
 // src/pages/metrics/Steps.tsx
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, RefreshCw } from "lucide-react";
+import { ArrowLeft, RefreshCw, Star } from "lucide-react";
 
 import { withingsStepsDaily, metrics as fitbitMetrics } from "@/lib/api";
 import { tokens } from "@/lib/storage";
@@ -34,6 +34,31 @@ function ymdLocal(d: Date) {
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
+
+// Custom dot for steps >= 10,000
+const CustomDot = (props: any) => {
+  const { cx, cy, payload } = props;
+  
+  if (payload.steps >= 10000) {
+    return (
+      <g>
+        <circle cx={cx} cy={cy} r={8} fill="#fbbf24" />
+        <text
+          x={cx}
+          y={cy}
+          textAnchor="middle"
+          dominantBaseline="central"
+          fill="#18181b"
+          fontSize={10}
+          fontWeight="bold"
+        >
+          ★
+        </text>
+      </g>
+    );
+  }
+  return null;
+};
 
 type Preset = 7 | 14 | 30;
 
@@ -306,7 +331,7 @@ export default function StepsPage() {
                   stroke="#3b82f6"
                   fill="url(#stepsGradient)"
                   strokeWidth={2}
-                  dot={false}
+                  dot={<CustomDot />}
                   activeDot={{ r: 4 }}
                 />
                 <defs>
@@ -347,7 +372,12 @@ export default function StepsPage() {
                       {row.date}
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 text-sm text-zinc-100">
-                      {row.steps.toLocaleString()}
+                      <div className="flex items-center gap-2">
+                        {row.steps.toLocaleString()}
+                        {row.steps >= 10000 && (
+                          <Star className="h-4 w-4 fill-amber-400 text-amber-400" />
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
