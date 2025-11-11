@@ -38,7 +38,7 @@ function ymdLocal(d: Date) {
 // Custom dot for steps >= 10,000
 const CustomDot = (props: any) => {
   const { cx, cy, payload } = props;
-  
+
   if (payload.steps >= 10000) {
     return (
       <g>
@@ -317,12 +317,24 @@ export default function StepsPage() {
                     borderRadius: 8,
                   }}
                   labelStyle={{ color: "#fafafa" }}
-                  formatter={(value: any) => [
-                    `${
-                      typeof value === "number" ? value.toLocaleString() : value
-                    } steps`,
-                    "Steps",
-                  ]}
+                  formatter={(value: any, name: any, props: any) => {
+                    const stepsValue = typeof value === "number" ? value : 0;
+                    const formattedSteps = `${stepsValue.toLocaleString()} steps`;
+                    
+                    if (stepsValue >= 10000) {
+                      return [
+                        <div key="steps" className="flex flex-col gap-1">
+                          <span>{formattedSteps}</span>
+                          <span className="text-amber-400 text-xs flex items-center gap-1">
+                            ⭐ You hit 10,000+ steps!
+                          </span>
+                        </div>,
+                        "Steps"
+                      ];
+                    }
+                    
+                    return [formattedSteps, "Steps"];
+                  }}
                   labelFormatter={(l) => `Date: ${l}`}
                 />
                 <Area
