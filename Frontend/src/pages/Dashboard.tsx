@@ -153,6 +153,8 @@ export default function Dashboard() {
   const [ecgHR, setEcgHR] = useState<number | null>(null);
   const [ecgTime, setEcgTime] = useState<string | null>(null);
   const [respiratoryRate, setRespiratoryRate] = useState<number | null>(null);
+  const [currentHR, setCurrentHR] = useState<number | null>(null);
+  const [currentHRAge, setCurrentHRAge] = useState<number | null>(null);
 
   const [dbDisplayName, setDbDisplayName] = useState<string | null>(null);
 
@@ -178,7 +180,8 @@ export default function Dashboard() {
       | "maxHR"
       | "minHR"
       | "ecg"
-      | "respiratoryRate",
+      | "respiratoryRate"
+      | "currentHR",
       boolean
     >
   >({
@@ -196,6 +199,7 @@ export default function Dashboard() {
     minHR: true,
     ecg: true,
     respiratoryRate: true,
+    currentHR: true,
   });
 
   const setLoad = (key: keyof typeof loading, val: boolean) =>
@@ -431,6 +435,17 @@ export default function Dashboard() {
             }
           } finally {
             setLoad("respiratoryRate", false);
+          }
+
+          // Current/Latest Heart Rate
+          try {
+            const hr = await fitbitMetrics.latestHeartRate(access);
+            if (mounted) {
+              setCurrentHR(hr.bpm ?? null);
+              setCurrentHRAge(hr.age_seconds ?? null);
+            }
+          } finally {
+            setLoad("currentHR", false);
           }
 
           // Token info (optional)
@@ -681,6 +696,15 @@ export default function Dashboard() {
 
           {provider === "fitbit" ? (
             <>
+              <StatCard
+                title="Current Heart Rate"
+                icon={<HeartPulse className="h-4 w-4" />}
+                value={currentHR ?? "—"}
+                unit="bpm"
+                pulse
+                to="/metrics/heart-rate"
+                loading={loading.currentHR}
+              />
               <StatCard
                 title="Sleep (total)"
                 icon={<Watch className="h-4 w-4" />}

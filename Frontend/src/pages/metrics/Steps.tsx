@@ -320,7 +320,7 @@ export default function StepsPage() {
                   formatter={(value: any, name: any, props: any) => {
                     const stepsValue = typeof value === "number" ? value : 0;
                     const formattedSteps = `${stepsValue.toLocaleString()} steps`;
-                    
+
                     if (stepsValue >= 10000) {
                       return [
                         <div key="steps" className="flex flex-col gap-1">
@@ -329,10 +329,10 @@ export default function StepsPage() {
                             ⭐ You hit 10,000+ steps!
                           </span>
                         </div>,
-                        "Steps"
+                        "Steps",
                       ];
                     }
-                    
+
                     return [formattedSteps, "Steps"];
                   }}
                   labelFormatter={(l) => `Date: ${l}`}

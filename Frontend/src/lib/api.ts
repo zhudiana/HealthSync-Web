@@ -267,6 +267,21 @@ export const metrics = {
       raw?: unknown;
     };
   },
+
+  latestHeartRate: async (token: string) => {
+    const u = new URL(`${API_BASE_URL}/fitbit/metrics/latest-heart-rate`);
+    u.searchParams.set("access_token", token);
+    const r = await fetch(u.toString());
+    const d = await r.json();
+    if (!r.ok) throw new Error(d?.detail || "latest heart rate failed");
+    return d as {
+      bpm: number | null;
+      ts: number | null;
+      cached_at: string | null;
+      age_seconds: number | null;
+      error?: string;
+    };
+  },
 };
 
 // ----------------------------------------------------------
