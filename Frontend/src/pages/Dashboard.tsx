@@ -363,6 +363,15 @@ export default function Dashboard() {
             // Silent fail - steps persistence is best-effort
           }
 
+          // Persist latest calories to database
+          try {
+            // Fetch today's calories and save it to DB
+            const todayStr = ymd();
+            await fitbitMetrics.calories(access, todayStr);
+          } catch {
+            // Silent fail - calories persistence is best-effort
+          }
+
           // Sleep
           try {
             let sleep = await fitbitMetrics.sleep(access);

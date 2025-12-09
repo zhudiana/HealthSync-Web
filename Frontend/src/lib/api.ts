@@ -291,6 +291,21 @@ export const metrics = {
     };
   },
 
+  calories: async (token: string, date?: string) => {
+    const u = new URL(`${API_BASE_URL}/fitbit/metrics/calories/today`);
+    u.searchParams.set("access_token", token);
+    if (date) u.searchParams.set("date", date);
+    const r = await fetch(u.toString());
+    const d = await r.json();
+    if (!r.ok) throw new Error(d?.detail || "calories failed");
+    return d as {
+      date: string;
+      calories_out: number | null;
+      activity_calories: number | null;
+      bmr_calories: number | null;
+    };
+  },
+
   latestHeartRate: async (token: string) => {
     const u = new URL(`${API_BASE_URL}/fitbit/metrics/latest-heart-rate`);
     u.searchParams.set("access_token", token);
