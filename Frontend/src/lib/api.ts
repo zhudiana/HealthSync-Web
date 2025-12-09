@@ -163,6 +163,16 @@ export const metrics = {
     return d;
   },
 
+  steps: async (token: string, date?: string) => {
+    const u = new URL(`${API_BASE_URL}/fitbit/metrics/steps/today`);
+    u.searchParams.set("access_token", token);
+    if (date) u.searchParams.set("date", date);
+    const r = await fetch(u.toString());
+    const d = await r.json();
+    if (!r.ok) throw new Error(d?.detail || "steps failed");
+    return d;
+  },
+
   spo2Nightly: async (token: string, date?: string) => {
     const u = new URL(`${API_BASE_URL}/fitbit/metrics/spo2-nightly`);
     u.searchParams.set("access_token", token);
@@ -233,25 +243,25 @@ export const metrics = {
     };
   },
 
-  steps: async (token: string, start: string, end: string) => {
-    const u = new URL(`${API_BASE_URL}/fitbit/metrics/steps`);
-    u.searchParams.set("access_token", token);
-    u.searchParams.set("start_date", start);
-    u.searchParams.set("end_date", end);
-    const r = await fetch(u.toString());
-    const d = await r.json();
-    if (!r.ok) throw new Error(d?.detail || "Failed to fetch steps data");
-    return d as {
-      start: string;
-      end: string;
-      items: {
-        date: string;
-        steps: number;
-        active_minutes?: number;
-        calories?: number;
-      }[];
-    };
-  },
+  // steps: async (token: string, start: string, end: string) => {
+  //   const u = new URL(`${API_BASE_URL}/fitbit/metrics/steps`);
+  //   u.searchParams.set("access_token", token);
+  //   u.searchParams.set("start_date", start);
+  //   u.searchParams.set("end_date", end);
+  //   const r = await fetch(u.toString());
+  //   const d = await r.json();
+  //   if (!r.ok) throw new Error(d?.detail || "Failed to fetch steps data");
+  //   return d as {
+  //     start: string;
+  //     end: string;
+  //     items: {
+  //       date: string;
+  //       steps: number;
+  //       active_minutes?: number;
+  //       calories?: number;
+  //     }[];
+  //   };
+  // },
 
   distance: async (token: string, date?: string) => {
     const u = new URL(`${API_BASE_URL}/fitbit/metrics/distance`);

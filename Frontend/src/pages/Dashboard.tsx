@@ -354,6 +354,15 @@ export default function Dashboard() {
             // Silent fail - distance persistence is best-effort
           }
 
+          // Persist latest steps to database
+          try {
+            // Fetch today's steps and save it to DB
+            const todayStr = ymd();
+            await fitbitMetrics.steps(access, todayStr);
+          } catch {
+            // Silent fail - steps persistence is best-effort
+          }
+
           // Sleep
           try {
             let sleep = await fitbitMetrics.sleep(access);
