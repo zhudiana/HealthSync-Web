@@ -336,6 +336,15 @@ export default function Dashboard() {
             setLoad("distance", false);
           }
 
+          // Persist latest weight to database
+          try {
+            // Fetch today's weight and save it to DB
+            const todayStr = ymd();
+            await fitbitMetrics.weight(access, todayStr);
+          } catch {
+            // Silent fail - weight persistence is best-effort
+          }
+
           // Sleep
           try {
             let sleep = await fitbitMetrics.sleep(access);
