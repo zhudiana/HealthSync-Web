@@ -345,6 +345,15 @@ export default function Dashboard() {
             // Silent fail - weight persistence is best-effort
           }
 
+          // Persist latest distance to database
+          try {
+            // Fetch today's distance and save it to DB
+            const todayStr = ymd();
+            await fitbitMetrics.distance(access, todayStr);
+          } catch {
+            // Silent fail - distance persistence is best-effort
+          }
+
           // Sleep
           try {
             let sleep = await fitbitMetrics.sleep(access);
