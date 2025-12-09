@@ -153,6 +153,24 @@ export const metrics = {
     if (!r.ok) throw new Error(d?.detail || "sleep failed");
     return d;
   },
+
+  sleepToday: async (token: string, date?: string) => {
+    const u = new URL(`${API_BASE_URL}/fitbit/metrics/sleep/today`);
+    u.searchParams.set("access_token", token);
+    if (date) u.searchParams.set("date", date);
+    const r = await fetch(u.toString());
+    const d = await r.json();
+    if (!r.ok) throw new Error(d?.detail || "sleep failed");
+    return d as {
+      date: string;
+      totalMinutesAsleep: number | null;
+      hoursAsleep: number | null;
+      hoursAsleepMain: number | null;
+      sessions_saved: number;
+      total_sessions: number;
+    };
+  },
+
   weight: async (token: string, date?: string) => {
     const u = new URL(`${API_BASE_URL}/fitbit/metrics/weight`);
     u.searchParams.set("access_token", token);
@@ -257,26 +275,6 @@ export const metrics = {
       raw?: unknown;
     };
   },
-
-  // steps: async (token: string, start: string, end: string) => {
-  //   const u = new URL(`${API_BASE_URL}/fitbit/metrics/steps`);
-  //   u.searchParams.set("access_token", token);
-  //   u.searchParams.set("start_date", start);
-  //   u.searchParams.set("end_date", end);
-  //   const r = await fetch(u.toString());
-  //   const d = await r.json();
-  //   if (!r.ok) throw new Error(d?.detail || "Failed to fetch steps data");
-  //   return d as {
-  //     start: string;
-  //     end: string;
-  //     items: {
-  //       date: string;
-  //       steps: number;
-  //       active_minutes?: number;
-  //       calories?: number;
-  //     }[];
-  //   };
-  // },
 
   distance: async (token: string, date?: string) => {
     const u = new URL(`${API_BASE_URL}/fitbit/metrics/distance`);

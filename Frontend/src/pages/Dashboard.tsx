@@ -381,6 +381,15 @@ export default function Dashboard() {
             setLoad("sleep", false);
           }
 
+          // Persist latest sleep to database
+          try {
+            // Fetch today's sleep and save it to DB
+            const todayStr = ymd();
+            await fitbitMetrics.sleepToday(access, todayStr);
+          } catch {
+            // Silent fail - sleep persistence is best-effort
+          }
+
           // HRV
           try {
             const today = new Date();
