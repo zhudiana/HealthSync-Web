@@ -189,6 +189,21 @@ export const metrics = {
     };
   },
 
+  spo2NightlyToday: async (token: string, date?: string) => {
+    const u = new URL(`${API_BASE_URL}/fitbit/metrics/spo2-nightly/today`);
+    u.searchParams.set("access_token", token);
+    if (date) u.searchParams.set("date", date);
+    const r = await fetch(u.toString());
+    const d = await r.json();
+    if (!r.ok) throw new Error(d?.detail || "spo2 failed");
+    return d as {
+      date: string;
+      average: number | null;
+      min: number | null;
+      saved: boolean;
+    };
+  },
+
   hrv: async (token: string, start: string, end: string) => {
     const u = new URL(`${API_BASE_URL}/fitbit/metrics/hrv`);
     u.searchParams.set("access_token", token);

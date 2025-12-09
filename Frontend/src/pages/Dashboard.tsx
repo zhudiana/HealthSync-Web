@@ -424,6 +424,15 @@ export default function Dashboard() {
             setLoad("spo2", false);
           }
 
+          // Persist latest SpO2 to database
+          try {
+            // Fetch today's SpO2 and save it to DB
+            const todayStr = ymd();
+            await fitbitMetrics.spo2NightlyToday(access, todayStr);
+          } catch {
+            // Silent fail - SpO2 persistence is best-effort
+          }
+
           // Temperature variability
           try {
             const endStr = ymd();
