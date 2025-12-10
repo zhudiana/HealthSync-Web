@@ -305,6 +305,23 @@ export const metrics = {
     };
   },
 
+  respiratoryRateToday: async (token: string, date?: string) => {
+    const u = new URL(`${API_BASE_URL}/fitbit/metrics/respiratory-rate/today`);
+    u.searchParams.set("access_token", token);
+    if (date) u.searchParams.set("date", date);
+    const r = await fetch(u.toString());
+    const d = await r.json();
+    if (!r.ok) throw new Error(d?.detail || "respiratory rate failed");
+    return d as {
+      date: string;
+      full_day_avg: number | null;
+      deep_sleep_avg: number | null;
+      light_sleep_avg: number | null;
+      rem_sleep_avg: number | null;
+      saved: boolean;
+    };
+  },
+
   respiratoryRate: async (token: string, start: string, end: string) => {
     const u = new URL(`${API_BASE_URL}/fitbit/metrics/respiratory-rate`);
     u.searchParams.set("access_token", token);

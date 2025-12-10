@@ -527,6 +527,16 @@ export default function Dashboard() {
             setLoad("respiratoryRate", false);
           }
 
+          // Respiratory Rate Persistence
+          try {
+            const todayStr = ymd();
+            const brResult = await fitbitMetrics.respiratoryRateToday(access, todayStr);
+            console.log("Breathing rate persistence result:", brResult);
+          } catch (err) {
+            // Silent fail - breathing rate persistence is best-effort
+            console.error("Breathing rate persistence error:", err);
+          }
+
           // Current/Latest Heart Rate
           try {
             const hr = await fitbitMetrics.latestHeartRate(access);
