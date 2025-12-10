@@ -466,20 +466,31 @@ export default function Dashboard() {
 
           // Persist latest temperature to database
           try {
-            // Fetch today's temperature and save it to DB
             const todayStr = ymd();
             const tempResult = await fitbitMetrics.temperatureToday(
               access,
               todayStr
             );
             console.log("Temperature data:", tempResult);
-            console.log("All readings details:", JSON.stringify(tempResult.all_readings, null, 2));
           } catch (err) {
             // Silent fail - temperature persistence is best-effort
             console.error("Temperature persistence error:", err);
           }
 
-          // Resting Heart Rate
+          // Resting Heart Rate Persistence
+          try {
+            const todayStr = ymd();
+            const rhrResult = await fitbitMetrics.restingHrToday(
+              access,
+              todayStr
+            );
+            console.log("Resting HR persistence result:", rhrResult);
+          } catch (err) {
+            // Silent fail - resting HR persistence is best-effort
+            console.error("Resting HR persistence error:", err);
+          }
+
+          // Resting Heart Rate Display
           try {
             const hr = await fitbitMetrics.restingHR(access);
             if (mounted) {
