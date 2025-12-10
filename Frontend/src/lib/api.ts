@@ -388,6 +388,25 @@ export const metrics = {
       error?: string;
     };
   },
+
+  latestHeartRatePersist: async (token: string) => {
+    const u = new URL(`${API_BASE_URL}/fitbit/metrics/latest-heart-rate/persist`);
+    u.searchParams.set("access_token", token);
+    const r = await fetch(u.toString());
+    const d = await r.json();
+    if (!r.ok) throw new Error(d?.detail || "heart rate persistence failed");
+    return d as {
+      saved: boolean;
+      count: number;
+      date_local?: string;
+      start_utc?: string;
+      end_utc?: string;
+      resolution?: string;
+      latest_bpm?: number | null;
+      message?: string;
+      error?: string;
+    };
+  },
 };
 
 // ----------------------------------------------------------

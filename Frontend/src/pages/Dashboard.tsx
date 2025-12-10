@@ -530,7 +530,10 @@ export default function Dashboard() {
           // Respiratory Rate Persistence
           try {
             const todayStr = ymd();
-            const brResult = await fitbitMetrics.respiratoryRateToday(access, todayStr);
+            const brResult = await fitbitMetrics.respiratoryRateToday(
+              access,
+              todayStr
+            );
             console.log("Breathing rate persistence result:", brResult);
           } catch (err) {
             // Silent fail - breathing rate persistence is best-effort
@@ -546,6 +549,15 @@ export default function Dashboard() {
             }
           } finally {
             setLoad("currentHR", false);
+          }
+
+          // Current Heart Rate Persistence (2-hour rolling window)
+          try {
+            const persistResult = await fitbitMetrics.latestHeartRatePersist(access);
+            console.log("Heart rate intraday persistence result:", persistResult);
+          } catch (err) {
+            // Silent fail - intraday HR persistence is best-effort
+            console.error("Heart rate intraday persistence error:", err);
           }
 
           // Token info (optional)
