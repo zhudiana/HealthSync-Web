@@ -473,6 +473,7 @@ export default function Dashboard() {
               todayStr
             );
             console.log("Temperature data:", tempResult);
+            console.log("All readings details:", JSON.stringify(tempResult.all_readings, null, 2));
           } catch (err) {
             // Silent fail - temperature persistence is best-effort
             console.error("Temperature persistence error:", err);
