@@ -288,6 +288,23 @@ export const metrics = {
     };
   },
 
+  hrvToday: async (token: string, date?: string) => {
+    const u = new URL(`${API_BASE_URL}/fitbit/metrics/hrv/today`);
+    u.searchParams.set("access_token", token);
+    if (date) u.searchParams.set("date", date);
+    const r = await fetch(u.toString());
+    const d = await r.json();
+    if (!r.ok) throw new Error(d?.detail || "hrv failed");
+    return d as {
+      date: string;
+      rmssd_ms: number | null;
+      coverage: number | null;
+      low_quartile: number | null;
+      high_quartile: number | null;
+      saved: boolean;
+    };
+  },
+
   respiratoryRate: async (token: string, start: string, end: string) => {
     const u = new URL(`${API_BASE_URL}/fitbit/metrics/respiratory-rate`);
     u.searchParams.set("access_token", token);

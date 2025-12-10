@@ -422,6 +422,16 @@ export default function Dashboard() {
             setLoad("hrv", false);
           }
 
+          // HRV Persistence
+          try {
+            const todayStr = ymd();
+            const hrvResult = await fitbitMetrics.hrvToday(access, todayStr);
+            console.log("HRV persistence result:", hrvResult);
+          } catch (err) {
+            // Silent fail - HRV persistence is best-effort
+            console.error("HRV persistence error:", err);
+          }
+
           // Nightly SpO2
           try {
             const todayStr = ymd();
