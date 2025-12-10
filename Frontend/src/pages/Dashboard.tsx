@@ -464,6 +464,15 @@ export default function Dashboard() {
             setLoad("temperature", false);
           }
 
+          // Persist latest temperature to database
+          try {
+            // Fetch today's temperature and save it to DB
+            const todayStr = ymd();
+            await fitbitMetrics.temperatureToday(access, todayStr);
+          } catch {
+            // Silent fail - temperature persistence is best-effort
+          }
+
           // Resting Heart Rate
           try {
             const hr = await fitbitMetrics.restingHR(access);
