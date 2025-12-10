@@ -390,7 +390,9 @@ export const metrics = {
   },
 
   latestHeartRatePersist: async (token: string) => {
-    const u = new URL(`${API_BASE_URL}/fitbit/metrics/latest-heart-rate/persist`);
+    const u = new URL(
+      `${API_BASE_URL}/fitbit/metrics/latest-heart-rate/persist`
+    );
     u.searchParams.set("access_token", token);
     const r = await fetch(u.toString());
     const d = await r.json();
@@ -834,4 +836,55 @@ export async function withingsTemperatureDaily(
     date: string;
     items: { ts: number; body_c: number }[];
   }>;
+}
+
+// ---------- Fitbit Weight History & Latest ----------
+export async function fitbitWeightHistory(
+  accessToken: string,
+  dateFrom: string,
+  dateTo: string
+) {
+  const url = new URL(`${API_BASE_URL}/fitbit/metrics/weight`);
+  url.searchParams.set("access_token", accessToken);
+  url.searchParams.set("date", dateFrom);
+  url.searchParams.set("end", dateTo);
+
+  const res = await fetch(url.toString());
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "fitbit weight history failed");
+
+  return data as {
+    date: string;
+    weight: Array<{
+      date: string;
+      weight_kg: number;
+      fat_pct: number | null;
+      bmi: number | null;
+      logId: string;
+      source: string;
+    }>;
+  };
+}
+
+export async function fitbitWeightLatest(accessToken: string) {
+  const url = new URL(`${API_BASE_URL}/fitbit/metrics/weight`);
+  url.searchParams.set("access_token", accessToken);
+  url.searchParams.set("period", "1d");
+
+  const res = await fetch(url.toString());
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "fitbit weight latest failed");
+
+  // Get the latest item from the response
+  const items = data.weight || [];
+  const latest = items[items.length - 1] || null;
+
+  return latest as {
+    date: string;
+    weight_kg: number;
+    fat_pct: number | null;
+    bmi: number | null;
+    logId: string;
+    source: string;
+  } | null;
 }

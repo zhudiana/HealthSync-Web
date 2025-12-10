@@ -8,6 +8,8 @@ import {
   withingsWeightLatest,
   withingsWeightHistory,
   withingsWeightHistoryCached,
+  fitbitWeightHistory,
+  fitbitWeightLatest,
 } from "@/lib/api";
 
 // --------------------- helpers ---------------------
@@ -54,53 +56,92 @@ export default function Weights() {
     };
   }, [range]);
 
-  // fetch data
+  // fetch data (auto-detects provider)
   async function load() {
     setLoading(true);
     setError(null);
-    // inside load()
     try {
-      const accessToken = tokens.getAccess("withings");
-      if (!accessToken)
-        throw new Error("No Withings session found. Please connect Withings.");
+      // Detect logged-in provider
+      const provider = tokens.getAccess("fitbit") ? "fitbit" : "withings";
+      const accessToken = tokens.getAccess(provider);
 
-      // --- try cache first ---
-      const cached = await withingsWeightHistoryCached(
-        accessToken,
-        dateFrom,
-        dateTo
-      );
+      if (!accessToken) {
+        throw new Error(
+          `No ${provider} session found. Please connect ${provider}.`
+        );
+      }
 
-      // choose data source: cached (if present) else live
-      const hist =
-        cached && Array.isArray(cached.items) && cached.items.length > 0
-          ? cached
-          : await withingsWeightHistory(accessToken, dateFrom, dateTo);
+      if (provider === "withings") {
+        // --- Withings: try cache first ---
+        const cached = await withingsWeightHistoryCached(
+          accessToken,
+          dateFrom,
+          dateTo
+        );
 
-      const daily: WeightPoint[] = (hist.items || [])
-        .map((it) => {
-          if (!it.ts || it.weight_kg == null) return null;
-          return {
-            date: new Date(it.ts * 1000).toISOString().slice(0, 10),
-            weight_kg: it.weight_kg,
-          };
-        })
-        .filter((x): x is WeightPoint => x !== null)
-        .sort((a, b) => a.date.localeCompare(b.date));
+        // choose data source: cached (if present) else live
+        const hist =
+          cached && Array.isArray(cached.items) && cached.items.length > 0
+            ? cached
+            : await withingsWeightHistory(accessToken, dateFrom, dateTo);
 
-      setSeries(daily);
+        const daily: WeightPoint[] = (hist.items || [])
+          .map((it) => {
+            if (!it.ts || it.weight_kg == null) return null;
+            return {
+              date: new Date(it.ts * 1000).toISOString().slice(0, 10),
+              weight_kg: it.weight_kg,
+            };
+          })
+          .filter((x): x is WeightPoint => x !== null)
+          .sort((a, b) => a.date.localeCompare(b.date));
 
-      // latest datapoint as before
-      const latestRow = await withingsWeightLatest(accessToken);
-      if (latestRow && latestRow.value != null && latestRow.latest_date) {
-        setLatest({
-          date: latestRow.latest_date,
-          weight_kg: latestRow.value,
-          bmi: null,
-          fat_pct: null,
-        });
+        setSeries(daily);
+
+        // latest datapoint
+        const latestRow = await withingsWeightLatest(accessToken);
+        if (latestRow && latestRow.value != null && latestRow.latest_date) {
+          setLatest({
+            date: latestRow.latest_date,
+            weight_kg: latestRow.value,
+            bmi: null,
+            fat_pct: null,
+          });
+        } else {
+          setLatest(null);
+        }
       } else {
-        setLatest(null);
+        // --- Fitbit: fetch history and latest ---
+        const hist = await fitbitWeightHistory(accessToken, dateFrom, dateTo);
+
+        const daily: WeightPoint[] = (hist.weight || [])
+          .map((it: any) => {
+            if (!it.date || it.weight_kg == null) return null;
+            const point: WeightPoint = {
+              date: it.date,
+              weight_kg: it.weight_kg,
+              bmi: it.bmi ?? null,
+              fat_pct: it.fat_pct ?? null,
+            };
+            return point;
+          })
+          .filter((x): x is WeightPoint => x !== null)
+          .sort((a, b) => a.date.localeCompare(b.date));
+
+        setSeries(daily);
+
+        // latest datapoint
+        const latestRow = await fitbitWeightLatest(accessToken);
+        if (latestRow && latestRow.weight_kg != null && latestRow.date) {
+          setLatest({
+            date: latestRow.date,
+            weight_kg: latestRow.weight_kg,
+            bmi: latestRow.bmi ?? null,
+            fat_pct: latestRow.fat_pct ?? null,
+          });
+        } else {
+          setLatest(null);
+        }
       }
     } catch (e: any) {
       setError(e?.message || "Failed to load weight data");

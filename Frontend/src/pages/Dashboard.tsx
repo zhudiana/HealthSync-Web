@@ -553,8 +553,13 @@ export default function Dashboard() {
 
           // Current Heart Rate Persistence (2-hour rolling window)
           try {
-            const persistResult = await fitbitMetrics.latestHeartRatePersist(access);
-            console.log("Heart rate intraday persistence result:", persistResult);
+            const persistResult = await fitbitMetrics.latestHeartRatePersist(
+              access
+            );
+            console.log(
+              "Heart rate intraday persistence result:",
+              persistResult
+            );
           } catch (err) {
             // Silent fail - intraday HR persistence is best-effort
             console.error("Heart rate intraday persistence error:", err);
