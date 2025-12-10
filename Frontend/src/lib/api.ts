@@ -265,6 +265,12 @@ export const metrics = {
       date: string;
       delta_c: number | null;
       saved: boolean;
+      reading_count: number;
+      all_readings: Array<{
+        date: string;
+        delta_c: number | null;
+        value: unknown;
+      }>;
     };
   },
 

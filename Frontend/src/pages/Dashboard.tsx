@@ -468,9 +468,14 @@ export default function Dashboard() {
           try {
             // Fetch today's temperature and save it to DB
             const todayStr = ymd();
-            await fitbitMetrics.temperatureToday(access, todayStr);
-          } catch {
+            const tempResult = await fitbitMetrics.temperatureToday(
+              access,
+              todayStr
+            );
+            console.log("Temperature data:", tempResult);
+          } catch (err) {
             // Silent fail - temperature persistence is best-effort
+            console.error("Temperature persistence error:", err);
           }
 
           // Resting Heart Rate
