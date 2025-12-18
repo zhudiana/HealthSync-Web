@@ -11,7 +11,11 @@ import {
   CartesianGrid,
 } from "recharts";
 import { tokens } from "@/lib/storage";
-import { stepsSeries, withingsDistanceDaily, fitbitDistanceHistory } from "@/lib/api";
+import {
+  stepsSeries,
+  withingsDistanceDaily,
+  fitbitDistanceHistory,
+} from "@/lib/api";
 
 // --------------------- helpers ---------------------
 function fmt(n: number | null | undefined, digits = 2) {
@@ -133,11 +137,7 @@ export default function Distance() {
         }
       } else {
         // --- Fitbit: fetch history for date range ---
-        const hist = await fitbitDistanceHistory(
-          accessToken,
-          dateFrom,
-          dateTo
-        );
+        const hist = await fitbitDistanceHistory(accessToken, dateFrom, dateTo);
 
         hist.items.forEach((it: any) => {
           if (it.date && it.distance_km != null) {

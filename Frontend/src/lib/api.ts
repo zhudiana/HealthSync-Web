@@ -930,3 +930,30 @@ export async function fitbitDistanceHistory(
     items: points,
   };
 }
+
+// ---------- Fitbit Steps History ----------
+export async function fitbitStepsHistory(
+  accessToken: string,
+  dateFrom: string,
+  dateTo: string
+) {
+  const url = new URL(`${API_BASE_URL}/fitbit/metrics/steps`);
+  url.searchParams.set("access_token", accessToken);
+  url.searchParams.set("start_date", dateFrom);
+  url.searchParams.set("end_date", dateTo);
+
+  const res = await fetch(url.toString());
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "fitbit steps history failed");
+
+  return data as {
+    start: string;
+    end: string;
+    items: Array<{
+      date: string;
+      steps: number | null;
+      active_minutes: number | null;
+      calories: number | null;
+    }>;
+  };
+}

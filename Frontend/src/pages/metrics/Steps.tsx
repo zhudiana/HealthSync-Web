@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowLeft, RefreshCw, Star } from "lucide-react";
 
-import { withingsStepsDaily, metrics as fitbitMetrics } from "@/lib/api";
+import { withingsStepsDaily, metrics as fitbitMetrics, fitbitStepsHistory } from "@/lib/api";
 import { tokens } from "@/lib/storage";
 import { useAuth } from "@/context/AuthContext";
 
@@ -122,7 +122,7 @@ export default function StepsPage() {
             startYmd,
             endYmd,
           });
-          const data = await fitbitMetrics.steps(accessToken, startYmd, endYmd);
+          const data = await fitbitStepsHistory(accessToken, startYmd, endYmd);
           console.log("Fitbit steps API response:", {
             start: data.start,
             end: data.end,
@@ -137,30 +137,16 @@ export default function StepsPage() {
             console.warn("No step data received from API");
           }
 
-          // Process each day in the range to ensure we have entries for all days
-          let currentDate = new Date(startYmd + "T00:00:00");
-          const endDate = new Date(endYmd + "T00:00:00");
-
-          while (currentDate <= endDate) {
-            const dateStr = ymdLocal(currentDate);
-            // Find matching data point or use null for steps
-            const dataPoint = data.items.find((item) => item.date === dateStr);
-
-            // Only set data if we have actual steps (including 0)
-            // This way we can distinguish between no data and actual 0 steps
-            if (dataPoint && typeof dataPoint.steps === "number") {
-              console.log(`Found steps for ${dateStr}:`, dataPoint.steps);
-              dataMap.set(dateStr, {
-                date: dateStr,
-                steps: dataPoint.steps,
+          // Process each item from the response
+          data.items.forEach((item) => {
+            if (item.date && typeof item.steps === "number") {
+              console.log(`Found steps for ${item.date}:`, item.steps);
+              dataMap.set(item.date, {
+                date: item.date,
+                steps: item.steps,
               });
-            } else {
-              console.log(`No steps data for ${dateStr}`);
             }
-
-            // Move to next day
-            currentDate.setDate(currentDate.getDate() + 1);
-          }
+          });
 
           // Log the final processed data
           console.log("Processed steps data:", Array.from(dataMap.entries()));
