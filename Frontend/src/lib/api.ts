@@ -888,3 +888,45 @@ export async function fitbitWeightLatest(accessToken: string) {
     source: string;
   } | null;
 }
+
+// ---------- Fitbit Distance History ----------
+export async function fitbitDistanceHistory(
+  accessToken: string,
+  dateFrom: string,
+  dateTo: string
+) {
+  const url = new URL(`${API_BASE_URL}/fitbit/metrics/distance`);
+  url.searchParams.set("access_token", accessToken);
+
+  // Fetch for each day in the range since Fitbit distance is daily
+  const points: Array<{ date: string; distance_km: number | null }> = [];
+  let currentDate = new Date(dateFrom);
+  const endDate = new Date(dateTo);
+
+  while (currentDate <= endDate) {
+    const dateStr = currentDate.toISOString().split("T")[0];
+    try {
+      const dayUrl = new URL(`${API_BASE_URL}/fitbit/metrics/distance`);
+      dayUrl.searchParams.set("access_token", accessToken);
+      dayUrl.searchParams.set("date", dateStr);
+
+      const res = await fetch(dayUrl.toString());
+      const data = await res.json();
+      if (res.ok) {
+        points.push({
+          date: data.date || dateStr,
+          distance_km: data.distance_km,
+        });
+      }
+    } catch (e) {
+      console.warn(`Failed to fetch distance for ${dateStr}:`, e);
+    }
+    currentDate.setDate(currentDate.getDate() + 1);
+  }
+
+  return {
+    start: dateFrom,
+    end: dateTo,
+    items: points,
+  };
+}

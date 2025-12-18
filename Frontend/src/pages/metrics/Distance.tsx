@@ -11,7 +11,7 @@ import {
   CartesianGrid,
 } from "recharts";
 import { tokens } from "@/lib/storage";
-import { stepsSeries } from "@/lib/api";
+import { stepsSeries, withingsDistanceDaily, fitbitDistanceHistory } from "@/lib/api";
 
 // --------------------- helpers ---------------------
 function fmt(n: number | null | undefined, digits = 2) {
@@ -23,9 +23,6 @@ function formatDate(d: string | Date) {
   const dt = typeof d === "string" ? new Date(d) : d;
   return dt.toISOString().slice(0, 10);
 }
-
-// --------------------- imports ---------------------
-import { withingsDistanceDaily } from "../../lib/api";
 
 // --------------------- types ---------------------
 interface DistancePoint {
@@ -39,6 +36,7 @@ export default function Distance() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [series, setSeries] = useState<DistancePoint[]>([]);
+  const [provider, setProvider] = useState<"fitbit" | "withings" | null>(null);
 
   // compute date range
   const { dateFrom, dateTo } = useMemo(() => {
@@ -53,73 +51,102 @@ export default function Distance() {
     };
   }, [range]);
 
-  // fetch data
+  // fetch data (auto-detects provider)
   async function load() {
     setLoading(true);
     setError(null);
     try {
-      const accessToken = tokens.getAccess("withings");
-      if (!accessToken)
-        throw new Error("No Withings session found. Please connect Withings.");
+      // Detect logged-in provider
+      const detectedProvider = tokens.getAccess("fitbit")
+        ? "fitbit"
+        : "withings";
+      setProvider(detectedProvider);
+      const accessToken = tokens.getAccess(detectedProvider);
 
-      const todayStr = formatDate(new Date());
-      const points: DistancePoint[] = [];
-
-      // Always get fresh data for today
-      const todayData = await stepsSeries(
-        accessToken,
-        "withings",
-        todayStr,
-        todayStr
-      );
-      if (todayData?.[0]) {
-        points.push({
-          date: todayStr,
-          distance_km: todayData[0].distance_km || 0,
-        });
+      if (!accessToken) {
+        throw new Error(
+          `No ${detectedProvider} session found. Please connect ${detectedProvider}.`
+        );
       }
 
-      // Try to get cached data for previous days
-      let currentDate = new Date(dateFrom);
-      const endDate = new Date(dateTo);
+      const points: DistancePoint[] = [];
 
-      while (currentDate <= endDate) {
-        const dateStr = formatDate(currentDate);
-        // Skip today since we already have fresh data for it
-        if (dateStr === todayStr) {
-          currentDate.setDate(currentDate.getDate() + 1);
-          continue;
+      if (detectedProvider === "withings") {
+        // --- Withings: fetch with cache fallback ---
+        const todayStr = formatDate(new Date());
+
+        // Always get fresh data for today
+        const todayData = await stepsSeries(
+          accessToken,
+          "withings",
+          todayStr,
+          todayStr
+        );
+        if (todayData?.[0]) {
+          points.push({
+            date: todayStr,
+            distance_km: todayData[0].distance_km || 0,
+          });
         }
 
-        try {
-          const data = await withingsDistanceDaily(accessToken, dateStr);
-          if (data && data.distance_km !== null) {
-            points.push({
-              date: dateStr,
-              distance_km: data.distance_km,
-            });
+        // Try to get cached data for previous days
+        let currentDate = new Date(dateFrom);
+        const endDate = new Date(dateTo);
+
+        while (currentDate <= endDate) {
+          const dateStr = formatDate(currentDate);
+          // Skip today since we already have fresh data for it
+          if (dateStr === todayStr) {
+            currentDate.setDate(currentDate.getDate() + 1);
+            continue;
           }
-        } catch (e) {
-          console.warn(`Failed to get cached data for ${dateStr}:`, e);
-          // If cached data not available, we'll fall back to the API
+
           try {
-            const apiData = await stepsSeries(
-              accessToken,
-              "withings",
-              dateStr,
-              dateStr
-            );
-            if (apiData?.[0]) {
+            const data = await withingsDistanceDaily(accessToken, dateStr);
+            if (data && data.distance_km !== null) {
               points.push({
                 date: dateStr,
-                distance_km: apiData[0].distance_km || 0,
+                distance_km: data.distance_km,
               });
             }
           } catch (e) {
-            console.warn(`Failed to fetch API data for ${dateStr}:`, e);
+            console.warn(`Failed to get cached data for ${dateStr}:`, e);
+            // If cached data not available, we'll fall back to the API
+            try {
+              const apiData = await stepsSeries(
+                accessToken,
+                "withings",
+                dateStr,
+                dateStr
+              );
+              if (apiData?.[0]) {
+                points.push({
+                  date: dateStr,
+                  distance_km: apiData[0].distance_km || 0,
+                });
+              }
+            } catch (e) {
+              console.warn(`Failed to fetch API data for ${dateStr}:`, e);
+            }
           }
+          currentDate.setDate(currentDate.getDate() + 1);
         }
-        currentDate.setDate(currentDate.getDate() + 1);
+      } else {
+        // --- Fitbit: fetch history for date range ---
+        const hist = await fitbitDistanceHistory(
+          accessToken,
+          dateFrom,
+          dateTo
+        );
+
+        hist.items.forEach((it: any) => {
+          if (it.date && it.distance_km != null) {
+            points.push({
+              date: it.date,
+              distance_km: it.distance_km,
+            });
+          }
+        });
       }
 
       // Sort by date
@@ -170,7 +197,10 @@ export default function Distance() {
             <div>
               <h2 className="text-2xl font-bold tracking-tight">Distance</h2>
               <p className="text-zinc-400">
-                Withings · {dateFrom} → {dateTo}
+                {provider
+                  ? provider.charAt(0).toUpperCase() + provider.slice(1)
+                  : "Loading"}{" "}
+                · {dateFrom} → {dateTo}
               </p>
             </div>
           </div>
