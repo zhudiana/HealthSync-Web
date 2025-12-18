@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { ChevronLeft, RefreshCw } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
-import { withingsSpO2, withingsSpO2Cached } from "@/lib/api";
+import { withingsSpO2, withingsSpO2Cached, fitbitSpo2History } from "@/lib/api";
+import { tokens } from "@/lib/storage";
 
 // ---- helpers ----
 function fmtDateISO(d: number) {
@@ -38,10 +39,11 @@ function statusForPercent(p: number | null | undefined) {
 type Preset = 7 | 14 | 30;
 
 export default function Spo2Page() {
-  const { getAccessToken } = useAuth();
+  const { getAccessToken, provider: authProvider } = useAuth();
   const [preset, setPreset] = useState<Preset>(14);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [provider, setProvider] = useState<"fitbit" | "withings" | null>(null);
 
   const [latest, setLatest] = useState<number | null>(null);
   const [latestTs, setLatestTs] = useState<number | null>(null);
@@ -52,52 +54,72 @@ export default function Spo2Page() {
     const end = new Date();
     const start = new Date();
     start.setDate(end.getDate() - (preset - 1));
+    const providerLabel = provider
+      ? provider.charAt(0).toUpperCase() + provider.slice(1)
+      : "Loading";
     return {
       startYmd: ymdLocal(start),
       endYmd: ymdLocal(end),
-      label: `Last ${preset} days · ${ymdLocal(start)} → ${ymdLocal(end)}`,
+      label: `${providerLabel} · Last ${preset} days · ${ymdLocal(start)} → ${ymdLocal(end)}`,
     };
-  }, [preset]);
+  }, [preset, provider]);
 
   async function load() {
     setLoading(true);
     setError(null);
     try {
+      // Detect logged-in provider
+      const detectedProvider = tokens.getAccess("fitbit")
+        ? "fitbit"
+        : "withings";
+      setProvider(detectedProvider);
+
       const token = await getAccessToken();
       if (!token) throw new Error("Not authenticated");
 
-      // 1) Always fetch full-range API first (ensures today is included)
-      const base: { ts: number; percent: number }[] = [];
-      const apiData = await withingsSpO2(token, startYmd, endYmd);
-      if (apiData?.items && Array.isArray(apiData.items)) {
-        base.push(...apiData.items);
-      }
-
-      // 2) Merge in any cached days (augment/override); this covers past days quickly
       const byTs = new Map<number, number>(); // ts -> percent
-      for (const it of base) byTs.set(it.ts, it.percent);
 
-      // iterate day-by-day in LOCAL time
-      let cur = new Date(startYmd + "T00:00:00");
-      const end = new Date(endYmd + "T00:00:00");
-
-      while (cur <= end) {
-        const dateStr = ymdLocal(cur);
-        try {
-          const cached = await withingsSpO2Cached(token, dateStr);
-          if (cached?.items?.length) {
-            for (const it of cached.items) {
-              // cache can override api or just add more points
-              byTs.set(it.ts, it.percent);
-            }
+      if (detectedProvider === "fitbit") {
+        // --- Fitbit: fetch date range directly ---
+        const fitbitData = await fitbitSpo2History(token, startYmd, endYmd);
+        if (fitbitData?.items && Array.isArray(fitbitData.items)) {
+          for (const it of fitbitData.items) {
+            byTs.set(it.ts, it.percent);
           }
-        } catch (e) {
-          // ignore per-day cache errors
-          // console.warn(`Cache error for ${dateStr}`, e);
         }
-        const next = new Date(cur);
-        next.setDate(cur.getDate() + 1);
-        cur = next;
+      } else {
+        // --- Withings: API + cache strategy ---
+        // 1) Always fetch full-range API first (ensures today is included)
+        const base: { ts: number; percent: number }[] = [];
+        const apiData = await withingsSpO2(token, startYmd, endYmd);
+        if (apiData?.items && Array.isArray(apiData.items)) {
+          base.push(...apiData.items);
+        }
+
+        // 2) Merge in any cached days (augment/override); this covers past days quickly
+        for (const it of base) byTs.set(it.ts, it.percent);
+
+        // iterate day-by-day in LOCAL time
+        let cur = new Date(startYmd + "T00:00:00");
+        const end = new Date(endYmd + "T00:00:00");
+
+        while (cur <= end) {
+          const dateStr = ymdLocal(cur);
+          try {
+            const cached = await withingsSpO2Cached(token, dateStr);
+            if (cached?.items?.length) {
+              for (const it of cached.items) {
+                // cache can override api or just add more points
+                byTs.set(it.ts, it.percent);
+              }
+            }
+          } catch (e) {
+            // ignore per-day cache errors
+          }
+          const next = new Date(cur);
+          next.setDate(cur.getDate() + 1);
+          cur = next;
+        }
       }
 
       // 3) Build final array

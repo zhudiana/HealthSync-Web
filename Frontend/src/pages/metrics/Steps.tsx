@@ -3,7 +3,11 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowLeft, RefreshCw, Star } from "lucide-react";
 
-import { withingsStepsDaily, metrics as fitbitMetrics, fitbitStepsHistory } from "@/lib/api";
+import {
+  withingsStepsDaily,
+  metrics as fitbitMetrics,
+  fitbitStepsHistory,
+} from "@/lib/api";
 import { tokens } from "@/lib/storage";
 import { useAuth } from "@/context/AuthContext";
 

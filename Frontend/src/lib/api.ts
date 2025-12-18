@@ -957,3 +957,43 @@ export async function fitbitStepsHistory(
     }>;
   };
 }
+
+// ---------- Fitbit SpO2 History ----------
+export async function fitbitSpo2History(
+  accessToken: string,
+  dateFrom: string,
+  dateTo: string
+) {
+  const points: Array<{ ts: number; percent: number }> = [];
+  let currentDate = new Date(dateFrom);
+  const endDate = new Date(dateTo);
+
+  while (currentDate <= endDate) {
+    const dateStr = currentDate.toISOString().split("T")[0];
+    try {
+      const url = new URL(`${API_BASE_URL}/fitbit/metrics/spo2-nightly`);
+      url.searchParams.set("access_token", accessToken);
+      url.searchParams.set("date", dateStr);
+
+      const res = await fetch(url.toString());
+      const data = await res.json();
+      if (res.ok && data.average != null) {
+        // Convert date string to timestamp at midnight UTC
+        const ts = Math.floor(new Date(dateStr + "T00:00:00Z").getTime() / 1000);
+        points.push({
+          ts,
+          percent: data.average,
+        });
+      }
+    } catch (e) {
+      console.warn(`Failed to fetch SpO2 for ${dateStr}:`, e);
+    }
+    currentDate.setDate(currentDate.getDate() + 1);
+  }
+
+  return {
+    start: dateFrom,
+    end: dateTo,
+    items: points,
+  };
+}
