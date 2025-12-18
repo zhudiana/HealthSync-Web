@@ -3,7 +3,6 @@ import { Link } from "react-router-dom";
 import { ChevronLeft, RefreshCw } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { withingsSpO2, withingsSpO2Cached, fitbitSpo2History } from "@/lib/api";
-import { tokens } from "@/lib/storage";
 
 // ---- helpers ----
 function fmtDateISO(d: number) {
@@ -68,10 +67,8 @@ export default function Spo2Page() {
     setLoading(true);
     setError(null);
     try {
-      // Detect logged-in provider
-      const detectedProvider = tokens.getAccess("fitbit")
-        ? "fitbit"
-        : "withings";
+      // Use provider from auth context (already correctly detected)
+      const detectedProvider = authProvider || "withings";
       setProvider(detectedProvider);
 
       const token = await getAccessToken();
