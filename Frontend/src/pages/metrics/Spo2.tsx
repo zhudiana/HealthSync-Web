@@ -2,7 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { ChevronLeft, RefreshCw } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
-import { withingsSpO2, withingsSpO2Cached, fitbitSpo2History } from "@/lib/api";
+import {
+  withingsSpO2,
+  withingsSpO2Cached,
+  fitbitSpo2History,
+  metrics,
+} from "@/lib/api";
 
 // ---- helpers ----
 function fmtDateISO(d: number) {
@@ -59,7 +64,9 @@ export default function Spo2Page() {
     return {
       startYmd: ymdLocal(start),
       endYmd: ymdLocal(end),
-      label: `${providerLabel} · Last ${preset} days · ${ymdLocal(start)} → ${ymdLocal(end)}`,
+      label: `${providerLabel} · Last ${preset} days · ${ymdLocal(
+        start
+      )} → ${ymdLocal(end)}`,
     };
   }, [preset, provider]);
 
@@ -77,11 +84,22 @@ export default function Spo2Page() {
       const byTs = new Map<number, number>(); // ts -> percent
 
       if (detectedProvider === "fitbit") {
-        // --- Fitbit: fetch date range directly ---
+        // --- Fitbit: fetch date range directly and persist ---
         const fitbitData = await fitbitSpo2History(token, startYmd, endYmd);
         if (fitbitData?.items && Array.isArray(fitbitData.items)) {
+          // Also persist each data point (silent fail if it fails)
           for (const it of fitbitData.items) {
             byTs.set(it.ts, it.percent);
+            // Persist the reading silently in background
+            try {
+              const dateStr = new Date(it.ts * 1000)
+                .toISOString()
+                .split("T")[0];
+              await metrics.spo2NightlyToday(token, dateStr);
+            } catch (e) {
+              console.warn(`Failed to persist SpO2 for timestamp ${it.ts}:`, e);
+              // Continue anyway, data is still displayed
+            }
           }
         }
       } else {

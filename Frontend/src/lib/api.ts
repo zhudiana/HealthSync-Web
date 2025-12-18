@@ -979,7 +979,9 @@ export async function fitbitSpo2History(
       const data = await res.json();
       if (res.ok && data.average != null) {
         // Convert date string to timestamp at midnight UTC
-        const ts = Math.floor(new Date(dateStr + "T00:00:00Z").getTime() / 1000);
+        const ts = Math.floor(
+          new Date(dateStr + "T00:00:00Z").getTime() / 1000
+        );
         points.push({
           ts,
           percent: data.average,

@@ -10,6 +10,7 @@ import {
   withingsWeightHistoryCached,
   fitbitWeightHistory,
   fitbitWeightLatest,
+  metrics,
 } from "@/lib/api";
 
 // --------------------- helpers ---------------------
@@ -111,7 +112,7 @@ export default function Weights() {
           setLatest(null);
         }
       } else {
-        // --- Fitbit: fetch history and latest ---
+        // --- Fitbit: fetch history and latest, and persist ---
         const hist = await fitbitWeightHistory(accessToken, dateFrom, dateTo);
 
         const daily: WeightPoint[] = (hist.weight || [])
@@ -123,6 +124,13 @@ export default function Weights() {
               bmi: it.bmi ?? null,
               fat_pct: it.fat_pct ?? null,
             };
+            // Persist the reading silently in background
+            try {
+              metrics.weight(accessToken, it.date);
+            } catch (e) {
+              console.warn(`Failed to persist weight for ${it.date}:`, e);
+              // Continue anyway, data is still displayed
+            }
             return point;
           })
           .filter((x): x is WeightPoint => x !== null)

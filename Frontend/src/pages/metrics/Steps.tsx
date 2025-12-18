@@ -149,6 +149,13 @@ export default function StepsPage() {
                 date: item.date,
                 steps: item.steps,
               });
+              // Persist the reading silently in background
+              try {
+                fitbitMetrics.steps(accessToken, item.date);
+              } catch (e) {
+                console.warn(`Failed to persist steps for ${item.date}:`, e);
+                // Continue anyway, data is still displayed
+              }
             }
           });
 

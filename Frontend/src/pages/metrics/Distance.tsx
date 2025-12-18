@@ -15,6 +15,7 @@ import {
   stepsSeries,
   withingsDistanceDaily,
   fitbitDistanceHistory,
+  metrics,
 } from "@/lib/api";
 
 // --------------------- helpers ---------------------
@@ -136,7 +137,7 @@ export default function Distance() {
           currentDate.setDate(currentDate.getDate() + 1);
         }
       } else {
-        // --- Fitbit: fetch history for date range ---
+        // --- Fitbit: fetch history for date range and persist ---
         const hist = await fitbitDistanceHistory(accessToken, dateFrom, dateTo);
 
         hist.items.forEach((it: any) => {
@@ -145,6 +146,13 @@ export default function Distance() {
               date: it.date,
               distance_km: it.distance_km,
             });
+            // Persist the reading silently in background
+            try {
+              metrics.distance(accessToken, it.date);
+            } catch (e) {
+              console.warn(`Failed to persist distance for ${it.date}:`, e);
+              // Continue anyway, data is still displayed
+            }
           }
         });
       }
