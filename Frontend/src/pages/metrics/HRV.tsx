@@ -168,7 +168,9 @@ export default function HRVPage() {
             <div className="text-2xl font-semibold">
               {latest != null ? `${fmt(latest, 0)} ms` : "–"}
             </div>
-            <div className="mt-1 text-xs text-zinc-500">Root Mean Square of Successive Differences</div>
+            <div className="mt-1 text-xs text-zinc-500">
+              Root Mean Square of Successive Differences
+            </div>
           </div>
           <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
             <div className="text-sm text-zinc-400">Daily average</div>
@@ -184,9 +186,7 @@ export default function HRVPage() {
             <div className="text-2xl font-semibold">
               {stats ? `${fmt(stats.min, 0)} - ${fmt(stats.max, 0)} ms` : "–"}
             </div>
-            <div className="mt-1 text-xs text-zinc-500">
-              Min - Max values
-            </div>
+            <div className="mt-1 text-xs text-zinc-500">Min - Max values</div>
           </div>
         </div>
 
@@ -206,7 +206,14 @@ export default function HRVPage() {
               <LineChart data={items}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
                 <XAxis dataKey="date" stroke="#a1a1aa" />
-                <YAxis stroke="#a1a1aa" label={{ value: "RMSSD (ms)", angle: -90, position: "insideLeft" }} />
+                <YAxis
+                  stroke="#a1a1aa"
+                  label={{
+                    value: "RMSSD (ms)",
+                    angle: -90,
+                    position: "insideLeft",
+                  }}
+                />
                 <Tooltip
                   contentStyle={{
                     backgroundColor: "#18181b",
@@ -215,7 +222,9 @@ export default function HRVPage() {
                   }}
                   labelStyle={{ color: "#fafafa" }}
                   formatter={(value: any) => [
-                    `${typeof value === "number" ? value.toFixed(0) : value} ms`,
+                    `${
+                      typeof value === "number" ? value.toFixed(0) : value
+                    } ms`,
                     "HRV (RMSSD)",
                   ]}
                   labelFormatter={(l) => `Date: ${l}`}
@@ -273,21 +282,25 @@ export default function HRVPage() {
           </h3>
           <div className="text-sm text-zinc-200 space-y-3 leading-relaxed">
             <p>
-              Heart Rate Variability (HRV) measures the variation in time between your heartbeats.
-              It's calculated as the Root Mean Square of Successive Differences (RMSSD) in milliseconds.
+              Heart Rate Variability (HRV) measures the variation in time
+              between your heartbeats. It's calculated as the Root Mean Square
+              of Successive Differences (RMSSD) in milliseconds.
             </p>
             <p>
-              <strong>Higher HRV values</strong> generally indicate better cardiovascular fitness and
-              recovery, as they suggest your parasympathetic nervous system (rest-and-digest) is active.
+              <strong>Higher HRV values</strong> generally indicate better
+              cardiovascular fitness and recovery, as they suggest your
+              parasympathetic nervous system (rest-and-digest) is active.
             </p>
             <p>
-              <strong>Lower HRV values</strong> may indicate stress, fatigue, illness, or inadequate
-              recovery. However, HRV varies significantly between individuals and should be interpreted
-              in the context of your own baseline and lifestyle.
+              <strong>Lower HRV values</strong> may indicate stress, fatigue,
+              illness, or inadequate recovery. However, HRV varies significantly
+              between individuals and should be interpreted in the context of
+              your own baseline and lifestyle.
             </p>
             <p>
-              HRV is typically measured during sleep when your body is most relaxed. Track trends over
-              time to identify patterns in your stress and recovery levels.
+              HRV is typically measured during sleep when your body is most
+              relaxed. Track trends over time to identify patterns in your
+              stress and recovery levels.
             </p>
           </div>
         </div>
