@@ -173,7 +173,11 @@ export const metrics = {
 
   sleepHistory: async (token: string, start: string, end: string) => {
     // Fetch sleep data for each day in the range
-    const items: { date: string; hoursAsleep: number | null; hoursAsleepMain: number | null }[] = [];
+    const items: {
+      date: string;
+      hoursAsleep: number | null;
+      hoursAsleepMain: number | null;
+    }[] = [];
     const current = new Date(start);
     const endDate = new Date(end);
 
@@ -399,6 +403,35 @@ export const metrics = {
       calories_out: number | null;
       activity_calories: number | null;
       bmr_calories: number | null;
+    };
+  },
+
+  caloriesHistory: async (token: string, start: string, end: string) => {
+    // Fetch calories data for each day in the range
+    const items: { date: string; calories_out: number | null; activity_calories: number | null; bmr_calories: number | null }[] = [];
+    const current = new Date(start);
+    const endDate = new Date(end);
+
+    while (current <= endDate) {
+      const dateStr = current.toISOString().split("T")[0];
+      try {
+        const data = await metrics.calories(token, dateStr);
+        items.push({
+          date: data.date,
+          calories_out: data.calories_out,
+          activity_calories: data.activity_calories,
+          bmr_calories: data.bmr_calories,
+        });
+      } catch (e) {
+        console.warn(`Failed to fetch calories for ${dateStr}:`, e);
+      }
+      current.setDate(current.getDate() + 1);
+    }
+
+    return {
+      start,
+      end,
+      items,
     };
   },
 
