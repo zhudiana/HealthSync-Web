@@ -7,6 +7,13 @@ from app.db.models.fitbit_account import FitbitAccount
 from app.db.models.user import User
 from app.db.crud import steps as steps_crud
 from app.db.crud import weights as weights_crud
+from app.db.crud import sleep as sleep_crud
+from app.db.crud import calories as calories_crud
+from app.db.crud import heart_rate as heart_rate_crud
+from app.db.crud import heart_rate_intraday as heart_rate_intraday_crud
+from app.db.crud import hrv as hrv_crud
+from app.db.crud import breathing_rate as breathing_rate_crud
+from app.db.crud.metrics import _upsert_spo2_reading, _upsert_temperature_reading
 from app.dependencies import get_db
 
 
@@ -241,42 +248,159 @@ def fitbit_sleep_summary(access_token: str, date: str = Query(default=None, desc
     }
 
 
-@router.get("/steps")
-def get_steps(
+@router.get("/sleep/today")
+def fitbit_sleep_today(
     access_token: str,
-    start_date: str = Query(..., description="YYYY-MM-DD"),
-    end_date: str = Query(..., description="YYYY-MM-DD"),
+    date: str = Query(default=None, description="YYYY-MM-DD (default: today)"),
     db: Session = Depends(get_db)
 ):
     """
-    Get steps data for a date range from the database.
-    This endpoint returns the stored steps data instead of fetching from Fitbit API.
+    Get Fitbit sleep data for a given date and store sleep sessions in our database.
     """
-    user, _ = _resolve_user_and_tz(db, access_token)
+    import json
     
-    start = datetime.strptime(start_date, "%Y-%m-%d").date()
-    end = datetime.strptime(end_date, "%Y-%m-%d").date()
+    # Resolve user from access token
+    user, tz = _resolve_user_and_tz(db, access_token)
+    d = date or _user_local_today(access_token)
     
-    steps_data = steps_crud.get_steps_by_date_range(
-        db,
-        user_id=user.id,
-        provider="fitbit",
-        start_date=start,
-        end_date=end
-    )
+    # Fetch sleep data from Fitbit API
+    url = f"{FITBIT_API}/1.2/user/-/sleep/date/{d}.json"
+    r = requests.get(url, headers=_auth_headers(access_token), timeout=30)
+    r = _handle_fitbit_response(r)
+    j = r.json() if r.headers.get("content-type","").startswith("application/json") else {}
+    
+    # Parse sleep data
+    logs = j.get("sleep", []) if isinstance(j, dict) else []
+    saved_count = 0
+    
+    # Save each sleep session to database
+    try:
+        for log in logs:
+            if not isinstance(log, dict):
+                continue
+            
+            # Extract session data
+            session_id = str(log.get("logId"))
+            start_time = log.get("startTime")
+            end_time = log.get("endTime")
+            total_min = log.get("duration") and log.get("duration") // 60  # Convert milliseconds to minutes
+            
+            # Parse timestamps
+            if not start_time or not end_time:
+                continue
+            
+            try:
+                start_at_utc = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+                end_at_utc = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+            except (ValueError, AttributeError):
+                continue
+            
+            # Serialize stages if available
+            stages_json = None
+            if "levels" in log and isinstance(log["levels"], dict):
+                try:
+                    stages_json = json.dumps(log["levels"])
+                except (TypeError, ValueError):
+                    stages_json = None
+            
+            # Get timezone offset
+            tz_offset_min = None
+            try:
+                local_tz = ZoneInfo(tz)
+                dt_local = datetime.fromisoformat(start_time)
+                if dt_local.tzinfo is None:
+                    dt_local = dt_local.replace(tzinfo=local_tz)
+                tz_offset_min = int(dt_local.utcoffset().total_seconds() / 60)
+            except Exception:
+                pass
+            
+            # Save to database
+            try:
+                sleep_crud.update_or_create_sleep_session(
+                    db,
+                    user_id=user.id,
+                    provider="fitbit",
+                    session_id=session_id,
+                    start_at_utc=start_at_utc,
+                    end_at_utc=end_at_utc,
+                    total_min=total_min,
+                    stages_json=stages_json,
+                    tz_offset_min=tz_offset_min
+                )
+                saved_count += 1
+            except Exception as e:
+                print(f"Failed to save sleep session {session_id}: {e}")
+    except Exception as e:
+        print(f"Failed to save sleep data for {d}: {e}")
+        db.rollback()
+    
+    # Get summary data
+    s = j.get("summary", {}) if isinstance(j, dict) else {}
+    mins_all = s.get("totalMinutesAsleep")
+    mins_main = sum((log.get("minutesAsleep") or 0) for log in logs if isinstance(log, dict) and log.get("isMainSleep"))
+    
+    hours_all = round(mins_all / 60, 2) if isinstance(mins_all, (int, float)) else None
+    hours_main = round(mins_main / 60, 2) if mins_main else None
     
     return {
-        "start": start_date,
-        "end": end_date,
-        "items": [
-            {
-                "date": item.date_local.isoformat(),
-                "steps": item.steps,
-                "active_minutes": item.active_min,
-                "calories": item.calories
-            }
-            for item in steps_data
-        ]
+        "date": d,
+        "totalMinutesAsleep": mins_all,
+        "hoursAsleep": hours_all,
+        "hoursAsleepMain": hours_main,
+        "sessions_saved": saved_count,
+        "total_sessions": len(logs)
+    }
+
+
+@router.get("/steps/today")
+def fitbit_steps_today(
+    access_token: str,
+    date: str = Query(default=None, description="YYYY-MM-DD (default: today)"),
+    db: Session = Depends(get_db)
+):
+    """
+    Return Fitbit steps for a given date and store it in our database.
+    Steps data comes from the daily summary endpoint.
+    """
+    # Resolve user from access token
+    user, _ = _resolve_user_and_tz(db, access_token)
+    d = date or _user_local_today(access_token)
+    
+    # Fetch data from Fitbit API
+    url = f"{FITBIT_API}/1/user/-/activities/date/{d}.json"
+    r = requests.get(url, headers=_auth_headers(access_token), timeout=30)
+    r = _handle_fitbit_response(r)
+    data = r.json()
+    summary = data.get("summary", {}) if isinstance(data, dict) else {}
+    
+    # Extract steps and active minutes
+    steps_value = summary.get("steps")
+    active_minutes = (
+        (summary.get("fairlyActiveMinutes") or 0) +
+        (summary.get("veryActiveMinutes") or 0) +
+        (summary.get("lightlyActiveMinutes") or 0)
+    )
+    calories = summary.get("caloriesOut")
+    
+    # Save to database
+    try:
+        steps_crud.update_or_create_steps(
+            db,
+            user_id=user.id,
+            provider="fitbit",
+            date_local=datetime.strptime(d, "%Y-%m-%d").date(),
+            steps=steps_value,
+            active_min=active_minutes,
+            calories=calories
+        )
+    except Exception as e:
+        print(f"Failed to save steps for {d}: {e}")
+    
+    return {
+        "date": d,
+        "steps": steps_value,
+        "active_min": active_minutes,
+        "calories": calories
     }
 
 @router.get("/overview")
@@ -411,11 +535,11 @@ def fitbit_weight_logs(
             
             processed_items.append({
                 "date": date_str,
-                "time": time_str,
-                "weight": reading.weight_kg,
-                "fat": reading.fat_pct,
-                "source": reading.device,
-                "logId": reading.provider_measure_id
+                "weight_kg": reading.weight_kg,
+                "fat_pct": reading.fat_pct,
+                "bmi": item.get("bmi"),  # From Fitbit API if available
+                "logId": reading.provider_measure_id,
+                "source": reading.device
             })
         except Exception as e:
             print(f"Failed to process weight reading: {e}")
@@ -426,7 +550,111 @@ def fitbit_weight_logs(
         "period": None if end else period,
         "end": end,
         "count": len(processed_items),
-        "items": processed_items
+        "weight": processed_items
+    }
+
+
+@router.get("/distance")
+def fitbit_distance(
+    access_token: str,
+    date: str = Query(default=None, description="YYYY-MM-DD (default: today)"),
+    db: Session = Depends(get_db)
+):
+    """
+    Return Fitbit distance for a given date and store it in our database.
+    Distance data comes from the daily summary endpoint.
+    """
+    from app.db.crud.metrics import _upsert_distance_daily
+    
+    # Resolve user from access token
+    user, _ = _resolve_user_and_tz(db, access_token)
+    d = date or _user_local_today(access_token)
+    
+    # Fetch data from Fitbit API
+    url = f"{FITBIT_API}/1/user/-/activities/date/{d}.json"
+    r = requests.get(url, headers=_auth_headers(access_token), timeout=30)
+    r = _handle_fitbit_response(r)
+    data = r.json()
+    summary = data.get("summary", {}) if isinstance(data, dict) else {}
+    
+    # Extract total distance
+    distances = summary.get("distances", [])
+    total_km = None
+    for dct in distances:
+        if dct.get("activity") == "total":
+            val = dct.get("distance")
+            total_km = round(val, 2) if isinstance(val, (int, float)) else None
+            break
+    
+    # Save to database
+    try:
+        date_obj = datetime.strptime(d, "%Y-%m-%d").date()
+        _upsert_distance_daily(
+            db,
+            user_id=user.id,
+            provider="fitbit",
+            date_local=date_obj,
+            distance_km=total_km
+        )
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"Failed to save distance: {e}")
+    
+    return {
+        "date": d,
+        "distance_km": total_km
+    }
+
+
+@router.get("/calories/today")
+def fitbit_calories_today(
+    access_token: str,
+    date: str = Query(default=None, description="YYYY-MM-DD (default: today)"),
+    db: Session = Depends(get_db)
+):
+    """
+    Return Fitbit calories for a given date and store it in our database.
+    Calories data comes from the daily summary endpoint.
+    """
+    # Resolve user from access token
+    user, _ = _resolve_user_and_tz(db, access_token)
+    d = date or _user_local_today(access_token)
+    
+    # Fetch data from Fitbit API
+    url = f"{FITBIT_API}/1/user/-/activities/date/{d}.json"
+    r = requests.get(url, headers=_auth_headers(access_token), timeout=30)
+    r = _handle_fitbit_response(r)
+    data = r.json()
+    summary = data.get("summary", {}) if isinstance(data, dict) else {}
+    
+    # Extract calories data
+    calories_out = summary.get("caloriesOut")
+    activity_calories = summary.get("activityCalories")
+    bmr_calories = summary.get("caloriesBMR")
+    
+    # Save to database
+    try:
+        date_obj = datetime.strptime(d, "%Y-%m-%d").date()
+        calories_crud.update_or_create_calories(
+            db,
+            user_id=user.id,
+            provider="fitbit",
+            date_local=date_obj,
+            calories_out=calories_out,
+            activity_calories=activity_calories,
+            bmr_calories=bmr_calories
+        )
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"Failed to save calories: {e}")
+    
+    return {
+        "date": d,
+        "calories_out": calories_out,
+        "activity_calories": activity_calories,
+        "bmr_calories": bmr_calories
     }
 
 
@@ -483,6 +711,78 @@ def fitbit_spo2_nightly(
     return out
 
 
+@router.get("/spo2-nightly/today")
+def fitbit_spo2_nightly_today(
+    access_token: str,
+    date: str = Query(default=None, description="YYYY-MM-DD (default: today)"),
+    db: Session = Depends(get_db)
+):
+    """
+    Get nightly SpO2 reading for a given date and store it in our database.
+    """
+    # Resolve user from access token
+    user, tz = _resolve_user_and_tz(db, access_token)
+    d = date or _user_local_today(access_token)
+    
+    # Fetch SpO2 data from Fitbit API
+    url = f"{FITBIT_API}/1/user/-/spo2/date/{d}.json"
+    r = requests.get(url, headers=_auth_headers(access_token), timeout=30)
+    r = _handle_fitbit_response(r)
+    j = r.json() if r.headers.get("content-type","").startswith("application/json") else {}
+    
+    # Parse SpO2 value
+    avg_pct = None
+    min_pct = None
+    
+    if isinstance(j, dict) and "value" in j and isinstance(j["value"], dict):
+        v = j["value"]
+        avg_pct = v.get("avg")
+        min_pct = v.get("min")
+    else:
+        # Try legacy format
+        arr = (j.get("spo2") or []) if isinstance(j, dict) else []
+        it = arr[0] if arr else {}
+        v = it.get("value")
+        if isinstance(v, dict):
+            avg_pct = v.get("avg")
+            min_pct = v.get("min")
+    
+    # Save to database if we have a reading
+    try:
+        if avg_pct is not None:
+            # Parse the date to get the measured_at_utc timestamp
+            # Use the date as measured_at_utc (end of day in user's timezone)
+            date_obj = datetime.strptime(d, "%Y-%m-%d")
+            # Convert to UTC by assuming the measurement is at midnight in user's timezone
+            local_tz = ZoneInfo(tz)
+            measured_at_local = date_obj.replace(tzinfo=local_tz)
+            measured_at_utc = measured_at_local.astimezone(timezone.utc)
+            
+            reading_id = f"fitbit_spo2_{d}"
+            
+            _upsert_spo2_reading(
+                db,
+                user_id=user.id,
+                provider="fitbit",
+                measured_at_utc=measured_at_utc,
+                avg_pct=avg_pct,
+                min_pct=min_pct,
+                type_="nightly",
+                reading_id=reading_id
+            )
+            db.commit()
+    except Exception as e:
+        print(f"Failed to save SpO2 for {d}: {e}")
+        db.rollback()
+    
+    return {
+        "date": d,
+        "average": avg_pct,
+        "min": min_pct,
+        "saved": avg_pct is not None
+    }
+
+
 @router.get("/hrv")
 def fitbit_hrv(access_token: str,
                start: str = Query(..., description="YYYY-MM-DD"),
@@ -518,6 +818,70 @@ def fitbit_breathing_rate(access_token: str,
             "light_sleep_avg": None,
             "rem_sleep_avg": None} for i in items]
     return {"start": start, "end": end, "items": out, "raw": j}
+
+
+@router.get("/respiratory-rate/today")
+def fitbit_breathing_rate_today(
+    access_token: str,
+    date: str = Query(default=None, description="YYYY-MM-DD (default: today)"),
+    db: Session = Depends(get_db)
+):
+    """
+    Get Fitbit breathing rate for a given date and save it to the database.
+    """
+    # Resolve user from access token
+    user, tz = _resolve_user_and_tz(db, access_token)
+    d = date or _user_local_today(access_token)
+    
+    # Fetch breathing rate data from Fitbit API for a single day
+    url = f"{FITBIT_API}/1/user/-/br/date/{d}/{d}.json"
+    r = requests.get(url, headers=_auth_headers(access_token), timeout=30)
+    r = _handle_fitbit_response(r)
+    j = r.json()
+    items = (j.get("br") or []) if isinstance(j, dict) else []
+    
+    # Extract breathing rate data
+    full_day_avg = None
+    deep_sleep_avg = None
+    light_sleep_avg = None
+    rem_sleep_avg = None
+    
+    if items and len(items) > 0:
+        first_item = items[0]
+        value_obj = first_item.get("value") or {}
+        full_day_avg = value_obj.get("breathingRate")
+        deep_sleep_avg = value_obj.get("deepSleepAverage")
+        light_sleep_avg = value_obj.get("lightSleepAverage")
+        rem_sleep_avg = value_obj.get("remSleepAverage")
+    
+    # Save to database if we have a reading
+    try:
+        if full_day_avg is not None:
+            date_obj = datetime.strptime(d, "%Y-%m-%d").date()
+            
+            breathing_rate_crud.update_or_create_breathing_rate_daily(
+                db,
+                user_id=user.id,
+                provider="fitbit",
+                date_local=date_obj,
+                full_day_avg=full_day_avg,
+                deep_sleep_avg=deep_sleep_avg,
+                light_sleep_avg=light_sleep_avg,
+                rem_sleep_avg=rem_sleep_avg
+            )
+            db.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"Failed to save breathing rate for {d}: {e}")
+    
+    return {
+        "date": d,
+        "full_day_avg": full_day_avg,
+        "deep_sleep_avg": deep_sleep_avg,
+        "light_sleep_avg": light_sleep_avg,
+        "rem_sleep_avg": rem_sleep_avg,
+        "saved": full_day_avg is not None
+    }
 
 
 @router.get("/temperature")
@@ -566,6 +930,214 @@ def fitbit_temperature(
         "count": len(normalized),
         "items": normalized,           # keep the series for charts
         "raw": j
+    }
+
+
+@router.get("/temperature/today")
+def fitbit_temperature_today(
+    access_token: str,
+    date: str = Query(default=None, description="YYYY-MM-DD (default: today)"),
+    db: Session = Depends(get_db)
+):
+    """
+    Get Fitbit skin temperature for a given date and store it in our database.
+    Fetches the latest temperature reading for the date and saves it.
+    """
+    # Resolve user from access token
+    user, tz = _resolve_user_and_tz(db, access_token)
+    d = date or _user_local_today(access_token)
+    
+    # Fetch temperature data from Fitbit API for a single day
+    url = f"{FITBIT_API}/1/user/-/temp/skin/date/{d}/{d}.json"
+    r = requests.get(url, headers=_auth_headers(access_token), timeout=30)
+    r = _handle_fitbit_response(r)
+    j = r.json()
+    items = (j.get("tempSkin") or []) if isinstance(j, dict) else []
+    
+    # Get the latest temperature reading
+    delta_c = None
+    measured_at_utc = None
+    all_readings = []
+    
+    if items:
+        # Collect all readings for debugging
+        for item in items:
+            value_obj = item.get("value") or {}
+            reading_delta = value_obj.get("nightlyRelative")
+            all_readings.append({
+                "date": item.get("dateTime"),
+                "delta_c": reading_delta,
+                "value": value_obj
+            })
+        
+        # Get the most recent reading with a valid delta value
+        # Find the last item with a non-null nightlyRelative
+        for item in reversed(items):
+            value_obj = item.get("value") or {}
+            reading_delta = value_obj.get("nightlyRelative")
+            if reading_delta is not None:
+                delta_c = reading_delta
+                date_time_str = item.get("dateTime")
+                
+                # Parse the timestamp
+                if date_time_str:
+                    try:
+                        # Parse ISO format timestamp
+                        measured_at_utc = datetime.fromisoformat(date_time_str.replace("Z", "+00:00"))
+                    except (ValueError, AttributeError):
+                        # Fallback: use midnight of the date in user's timezone
+                        try:
+                            date_obj = datetime.strptime(d, "%Y-%m-%d")
+                            local_tz = ZoneInfo(tz)
+                            measured_at_local = date_obj.replace(tzinfo=local_tz)
+                            measured_at_utc = measured_at_local.astimezone(timezone.utc)
+                        except Exception:
+                            pass
+                break
+    
+    # Save to database if we have a reading
+    try:
+        if delta_c is not None and measured_at_utc is not None:
+            _upsert_temperature_reading(
+                db,
+                user_id=user.id,
+                provider="fitbit",
+                measured_at_utc=measured_at_utc,
+                body_c=None,
+                skin_c=None,
+                delta_c=delta_c
+            )
+            db.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"Failed to save temperature for {d}: {e}")
+    
+    return {
+        "date": d,
+        "delta_c": delta_c,
+        "saved": delta_c is not None,
+        "reading_count": len(items),
+        "all_readings": all_readings  # Include all readings for debugging
+    }
+
+
+@router.get("/resting-hr/today")
+def fitbit_resting_hr_today(
+    access_token: str,
+    date: str = Query(default=None, description="YYYY-MM-DD (default: today)"),
+    db: Session = Depends(get_db)
+):
+    """
+    Get Fitbit resting heart rate for a given date and save it to the database.
+    """
+    # Resolve user from access token
+    user, tz = _resolve_user_and_tz(db, access_token)
+    d = date or _user_local_today(access_token)
+    
+    # Fetch resting heart rate data from Fitbit API
+    url = f"{FITBIT_API}/1/user/-/activities/heart/date/{d}/1d.json"
+    r = requests.get(url, headers=_auth_headers(access_token), timeout=30)
+    r = _handle_fitbit_response(r)
+    j = r.json()
+    arr = j.get("activities-heart", []) if isinstance(j, dict) else []
+    v = (arr[0].get("value") if arr else {}) or {}
+    resting_hr = v.get("restingHeartRate")
+    
+    # Save to database if we have a reading
+    try:
+        if resting_hr is not None:
+            # Parse the date to UTC (midnight of that day in user's timezone)
+            try:
+                date_obj = datetime.strptime(d, "%Y-%m-%d")
+                local_tz = ZoneInfo(tz)
+                measured_at_local = date_obj.replace(tzinfo=local_tz)
+                measured_at_utc = measured_at_local.astimezone(timezone.utc)
+            except Exception:
+                measured_at_utc = datetime.now(timezone.utc)
+            
+            heart_rate_crud.update_or_create_heart_rate_daily(
+                db,
+                user_id=user.id,
+                provider="fitbit",
+                date_local=date_obj,
+                avg_bpm=resting_hr,
+                min_bpm=None,
+                max_bpm=None,
+                sample_count=1
+            )
+            db.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"Failed to save resting HR for {d}: {e}")
+    
+    return {
+        "date": d,
+        "resting_hr": resting_hr,
+        "saved": resting_hr is not None
+    }
+
+
+@router.get("/hrv/today")
+def fitbit_hrv_today(
+    access_token: str,
+    date: str = Query(default=None, description="YYYY-MM-DD (default: today)"),
+    db: Session = Depends(get_db)
+):
+    """
+    Get Fitbit HRV for a given date and save it to the database.
+    """
+    # Resolve user from access token
+    user, tz = _resolve_user_and_tz(db, access_token)
+    d = date or _user_local_today(access_token)
+    
+    # Fetch HRV data from Fitbit API for a single day
+    url = f"{FITBIT_API}/1/user/-/hrv/date/{d}/{d}.json"
+    r = requests.get(url, headers=_auth_headers(access_token), timeout=30)
+    r = _handle_fitbit_response(r)
+    j = r.json()
+    items = (j.get("hrv") or []) if isinstance(j, dict) else []
+    
+    # Extract HRV data
+    rmssd_ms = None
+    coverage = None
+    low_quartile = None
+    high_quartile = None
+    
+    if items and len(items) > 0:
+        first_item = items[0]
+        value_obj = first_item.get("value") or {}
+        rmssd_ms = value_obj.get("dailyRmssd")
+        coverage = value_obj.get("coverage")
+        low_quartile = value_obj.get("lowQuartile")
+        high_quartile = value_obj.get("highQuartile")
+    
+    # Save to database if we have a reading
+    try:
+        if rmssd_ms is not None:
+            date_obj = datetime.strptime(d, "%Y-%m-%d").date()
+            
+            hrv_crud.update_or_create_hrv_daily(
+                db,
+                user_id=user.id,
+                provider="fitbit",
+                date_local=date_obj,
+                rmssd_ms=rmssd_ms,
+                coverage=coverage,
+                low_quartile=low_quartile,
+                high_quartile=high_quartile
+            )
+            db.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"Failed to save HRV for {d}: {e}")
+    
+    return {
+        "date": d,
+        "rmssd_ms": rmssd_ms,
+        "coverage": coverage,
+        "low_quartile": low_quartile,
+        "high_quartile": high_quartile,
+        "saved": rmssd_ms is not None
     }
 
 
@@ -737,6 +1309,139 @@ def fitbit_intraday_heart_rate(
             "tz": tzname
         }
     }
+
+
+@router.get("/latest-heart-rate")
+def get_latest_heart_rate_cached(access_token: str, db: Session = Depends(get_db)):
+    """
+    Get the latest heart rate reading without database caching.
+    Fetches the last 2 hours of intraday HR data and returns the most recent value.
+    """
+    user, _ = _resolve_user_and_tz(db, access_token)
+    
+    try:
+        # Fetch intraday heart rate for the last 2 hours with explicit detail parameter
+        intraday_result = fitbit_intraday_heart_rate(
+            access_token=access_token,
+            minutes=120,
+            detail="1sec"
+        )
+        
+        items = intraday_result.get("items", [])
+        latest = intraday_result.get("latest")
+        
+        if latest and isinstance(latest, dict):
+            return {
+                "bpm": latest.get("bpm"),
+                "ts": latest.get("ts"),
+                "cached_at": datetime.utcnow().isoformat(),
+                "age_seconds": 0
+            }
+        
+        return {
+            "bpm": None,
+            "ts": None,
+            "cached_at": None,
+            "age_seconds": None
+        }
+    except Exception as e:
+        # If intraday fails, return empty
+        return {
+            "bpm": None,
+            "ts": None,
+            "cached_at": None,
+            "age_seconds": None,
+            "error": str(e)
+        }
+
+
+@router.get("/latest-heart-rate/persist")
+def persist_latest_heart_rate(access_token: str, db: Session = Depends(get_db)):
+    """
+    Fetch the last 2 hours of intraday heart rate data and persist it to the database.
+    This captures all HR readings from the rolling 2-hour window.
+    """
+    user, tz = _resolve_user_and_tz(db, access_token)
+    
+    try:
+        # Fetch intraday heart rate for the last 2 hours with explicit detail parameter
+        intraday_result = fitbit_intraday_heart_rate(
+            access_token=access_token,
+            minutes=120,
+            detail="1sec"
+        )
+        
+        items = intraday_result.get("items", [])
+        window = intraday_result.get("window", {})
+        
+        if not items:
+            return {
+                "saved": False,
+                "count": 0,
+                "message": "No heart rate data available"
+            }
+        
+        # Determine the date_local from the window
+        start_local = window.get("start_local")
+        if start_local:
+            # Convert unix timestamp to datetime
+            dt_local = datetime.fromtimestamp(start_local, tz=timezone.utc)
+            date_local = dt_local.date()
+        else:
+            date_local = datetime.now().date()
+        
+        # Determine resolution (1sec or 1min based on data)
+        resolution = "1sec" if len(items) > 60 else "1min"
+        
+        # Extract start and end times in UTC
+        start_ts = window.get("start_local")
+        end_ts = window.get("end_local")
+        
+        if start_ts and end_ts:
+            start_at_utc = datetime.fromtimestamp(start_ts, tz=timezone.utc)
+            end_at_utc = datetime.fromtimestamp(end_ts, tz=timezone.utc)
+        else:
+            # Fallback: use current time
+            end_at_utc = datetime.now(timezone.utc)
+            start_at_utc = end_at_utc - timedelta(hours=2)
+        
+        # Save to database
+        try:
+            heart_rate_intraday_crud.update_or_create_heart_rate_intraday(
+                db,
+                user_id=user.id,
+                provider="fitbit",
+                date_local=date_local,
+                start_at_utc=start_at_utc,
+                end_at_utc=end_at_utc,
+                resolution=resolution,
+                samples=items
+            )
+            db.commit()
+            
+            return {
+                "saved": True,
+                "count": len(items),
+                "date_local": date_local.isoformat(),
+                "start_utc": start_at_utc.isoformat(),
+                "end_utc": end_at_utc.isoformat(),
+                "resolution": resolution,
+                "latest_bpm": items[-1].get("bpm") if items else None
+            }
+        except Exception as e:
+            db.rollback()
+            print(f"Failed to save intraday heart rate: {e}")
+            return {
+                "saved": False,
+                "count": 0,
+                "error": str(e)
+            }
+    except Exception as e:
+        return {
+            "saved": False,
+            "count": 0,
+            "error": str(e)
+        }
 
 
 

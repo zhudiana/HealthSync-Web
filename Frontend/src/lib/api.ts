@@ -171,6 +171,34 @@ export const metrics = {
     };
   },
 
+  sleepHistory: async (token: string, start: string, end: string) => {
+    // Fetch sleep data for each day in the range
+    const items: { date: string; hoursAsleep: number | null; hoursAsleepMain: number | null }[] = [];
+    const current = new Date(start);
+    const endDate = new Date(end);
+
+    while (current <= endDate) {
+      const dateStr = current.toISOString().split("T")[0];
+      try {
+        const data = await metrics.sleepToday(token, dateStr);
+        items.push({
+          date: data.date,
+          hoursAsleep: data.hoursAsleep,
+          hoursAsleepMain: data.hoursAsleepMain,
+        });
+      } catch (e) {
+        console.warn(`Failed to fetch sleep for ${dateStr}:`, e);
+      }
+      current.setDate(current.getDate() + 1);
+    }
+
+    return {
+      start,
+      end,
+      items,
+    };
+  },
+
   weight: async (token: string, date?: string) => {
     const u = new URL(`${API_BASE_URL}/fitbit/metrics/weight`);
     u.searchParams.set("access_token", token);

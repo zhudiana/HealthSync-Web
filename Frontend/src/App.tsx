@@ -11,6 +11,7 @@ import Spo2 from "./pages/metrics/Spo2";
 import Temperature from "./pages/metrics/Temperature";
 import AverageHeartRate from "./pages/metrics/AverageHeartRate";
 import HRVPage from "./pages/metrics/HRV";
+import SleepPage from "./pages/metrics/Sleep";
 import ECGPage from "./pages/metrics/ECG";
 
 function Protected({ children }: { children: React.ReactNode }) {
@@ -87,6 +88,14 @@ export default function App() {
             element={
               <Protected>
                 <HRVPage />
+              </Protected>
+            }
+          />
+          <Route
+            path="/metrics/sleep"
+            element={
+              <Protected>
+                <SleepPage />
               </Protected>
             }
           />
