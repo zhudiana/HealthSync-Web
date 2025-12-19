@@ -306,6 +306,33 @@ export const metrics = {
     };
   },
 
+  temperatureHistory: async (token: string, start: string, end: string) => {
+    // Fetch temperature data for each day in the range
+    const items: { date: string; delta_c: number | null }[] = [];
+    const current = new Date(start);
+    const endDate = new Date(end);
+
+    while (current <= endDate) {
+      const dateStr = current.toISOString().split("T")[0];
+      try {
+        const data = await metrics.temperatureToday(token, dateStr);
+        items.push({
+          date: data.date,
+          delta_c: data.delta_c,
+        });
+      } catch (e) {
+        console.warn(`Failed to fetch temperature for ${dateStr}:`, e);
+      }
+      current.setDate(current.getDate() + 1);
+    }
+
+    return {
+      start,
+      end,
+      items,
+    };
+  },
+
   restingHrToday: async (token: string, date?: string) => {
     const u = new URL(`${API_BASE_URL}/fitbit/metrics/resting-hr/today`);
     u.searchParams.set("access_token", token);
@@ -408,7 +435,12 @@ export const metrics = {
 
   caloriesHistory: async (token: string, start: string, end: string) => {
     // Fetch calories data for each day in the range
-    const items: { date: string; calories_out: number | null; activity_calories: number | null; bmr_calories: number | null }[] = [];
+    const items: {
+      date: string;
+      calories_out: number | null;
+      activity_calories: number | null;
+      bmr_calories: number | null;
+    }[] = [];
     const current = new Date(start);
     const endDate = new Date(end);
 

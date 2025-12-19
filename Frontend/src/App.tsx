@@ -9,6 +9,7 @@ import Weights from "./pages/metrics/Weights";
 import Distance from "./pages/metrics/Distance";
 import Spo2 from "./pages/metrics/Spo2";
 import Temperature from "./pages/metrics/Temperature";
+import SkinTemperaturePage from "./pages/metrics/SkinTemperature";
 import AverageHeartRate from "./pages/metrics/AverageHeartRate";
 import HRVPage from "./pages/metrics/HRV";
 import SleepPage from "./pages/metrics/Sleep";
@@ -73,6 +74,14 @@ export default function App() {
             element={
               <Protected>
                 <Temperature />
+              </Protected>
+            }
+          />
+          <Route
+            path="/metrics/skin-temperature"
+            element={
+              <Protected>
+                <SkinTemperaturePage />
               </Protected>
             }
           />
