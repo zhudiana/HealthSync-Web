@@ -160,11 +160,11 @@ export default function BreathingRatePage() {
           : null;
 
       const latestFull =
-        filtered.length > 0
-          ? filtered[filtered.length - 1].full_day_avg
-          : null;
+        filtered.length > 0 ? filtered[filtered.length - 1].full_day_avg : null;
       const latestDeep =
-        filtered.length > 0 ? filtered[filtered.length - 1].deep_sleep_avg : null;
+        filtered.length > 0
+          ? filtered[filtered.length - 1].deep_sleep_avg
+          : null;
 
       setSeries(points);
       setStats({
@@ -405,8 +405,8 @@ export default function BreathingRatePage() {
               different sleep stages (deep sleep, light sleep, REM sleep).
             </li>
             <li>
-              <strong>Normal Range:</strong> A typical resting breathing rate for
-              adults is 12-20 breaths per minute.
+              <strong>Normal Range:</strong> A typical resting breathing rate
+              for adults is 12-20 breaths per minute.
             </li>
             <li>
               <strong>Health Indicator:</strong> Changes in breathing rate can
