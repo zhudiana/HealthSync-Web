@@ -819,7 +819,7 @@ export default function Dashboard() {
                 value={currentHR ?? "—"}
                 unit="bpm"
                 pulse
-                to="/metrics/heart-rate"
+                to="/metrics/current-heart-rate"
                 loading={loading.currentHR}
               />
               <StatCard
