@@ -93,10 +93,12 @@ export default function SkinTemperaturePage() {
       }
 
       // Filter out entries with null delta_c
-      const filtered = data.items.filter((it) => it.delta_c != null) as Array<{
+      const filtered = data.items.filter((it) => it.delta_c != null && typeof it.delta_c === 'number') as Array<{
         date: string;
         delta_c: number;
       }>;
+      
+      console.log('Loaded temperature history:', { start: data.start, end: data.end, itemCount: data.items.length, filteredCount: filtered.length });
 
       // Sort by date
       filtered.sort((a, b) => a.date.localeCompare(b.date));
@@ -117,11 +119,9 @@ export default function SkinTemperaturePage() {
 
       // Persist each reading in background (silent fail)
       filtered.forEach((it) => {
-        try {
-          metrics.temperatureToday(token, it.date);
-        } catch (e) {
+        metrics.temperatureToday(token, it.date).catch((e) => {
           console.warn(`Failed to persist temperature for ${it.date}:`, e);
-        }
+        });
       });
     } catch (e: any) {
       setError(e?.message || "Failed to load temperature data");
@@ -155,9 +155,9 @@ export default function SkinTemperaturePage() {
             </Link>
             <div>
               <h2 className="text-2xl font-bold tracking-tight">
-                Skin Temperature
+                Skin Temperature (Fitbit)
               </h2>
-              <p className="text-zinc-400">{label}</p>
+              <p className="text-zinc-400">Last {preset} days · {label}</p>
             </div>
           </div>
 

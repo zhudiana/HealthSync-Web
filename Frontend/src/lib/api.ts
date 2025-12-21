@@ -309,8 +309,8 @@ export const metrics = {
   temperatureHistory: async (token: string, start: string, end: string) => {
     // Fetch temperature data for each day in the range
     const items: { date: string; delta_c: number | null }[] = [];
-    const current = new Date(start);
-    const endDate = new Date(end);
+    const current = new Date(start + "T00:00:00");
+    const endDate = new Date(end + "T00:00:00");
 
     while (current <= endDate) {
       const dateStr = current.toISOString().split("T")[0];
