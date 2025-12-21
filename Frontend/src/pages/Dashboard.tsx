@@ -862,7 +862,11 @@ export default function Dashboard() {
             value={fmtNumber(tempVar, 1)}
             unit="°C"
             foot={labelFor(tempDateIso)}
-            to="/metrics/temperature"
+            to={
+              provider === "fitbit"
+                ? "/metrics/skin-temperature"
+                : "/metrics/temperature"
+            }
             loading={loading.temperature}
           />
 
