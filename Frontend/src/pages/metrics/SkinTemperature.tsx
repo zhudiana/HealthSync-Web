@@ -55,10 +55,15 @@ export default function SkinTemperaturePage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [series, setSeries] = useState<Array<{ date: string; delta_c: number }>>([]);
+  const [series, setSeries] = useState<
+    Array<{ date: string; delta_c: number }>
+  >([]);
   const [latest, setLatest] = useState<number | null>(null);
   const [avg, setAvg] = useState<number | null>(null);
-  const [minMax, setMinMax] = useState<{ min: number | null; max: number | null }>({ min: null, max: null });
+  const [minMax, setMinMax] = useState<{
+    min: number | null;
+    max: number | null;
+  }>({ min: null, max: null });
 
   // ---------------- access token ----------------
   const { getAccessToken } = useAuth();
@@ -93,24 +98,33 @@ export default function SkinTemperaturePage() {
       }
 
       // Filter out entries with null delta_c
-      const filtered = data.items.filter((it) => it.delta_c != null && typeof it.delta_c === 'number') as Array<{
+      const filtered = data.items.filter(
+        (it) => it.delta_c != null && typeof it.delta_c === "number"
+      ) as Array<{
         date: string;
         delta_c: number;
       }>;
-      
-      console.log('Loaded temperature history:', { start: data.start, end: data.end, itemCount: data.items.length, filteredCount: filtered.length });
+
+      console.log("Loaded temperature history:", {
+        start: data.start,
+        end: data.end,
+        itemCount: data.items.length,
+        filteredCount: filtered.length,
+      });
 
       // Sort by date
       filtered.sort((a, b) => a.date.localeCompare(b.date));
 
       // Calculate statistics
       const temps = filtered.map((it) => it.delta_c);
-      const tempAvg = temps.length > 0 ? temps.reduce((a, b) => a + b) / temps.length : null;
+      const tempAvg =
+        temps.length > 0 ? temps.reduce((a, b) => a + b) / temps.length : null;
       const tempMin = temps.length > 0 ? Math.min(...temps) : null;
       const tempMax = temps.length > 0 ? Math.max(...temps) : null;
 
       // Get latest (most recent)
-      const latestTemp = filtered.length > 0 ? filtered[filtered.length - 1].delta_c : null;
+      const latestTemp =
+        filtered.length > 0 ? filtered[filtered.length - 1].delta_c : null;
 
       setSeries(filtered);
       setLatest(latestTemp);
@@ -157,7 +171,9 @@ export default function SkinTemperaturePage() {
               <h2 className="text-2xl font-bold tracking-tight">
                 Skin Temperature (Fitbit)
               </h2>
-              <p className="text-zinc-400">Last {preset} days · {label}</p>
+              <p className="text-zinc-400">
+                Last {preset} days · {label}
+              </p>
             </div>
           </div>
 
@@ -194,16 +210,8 @@ export default function SkinTemperaturePage() {
 
         {/* Stats grid */}
         <div className="grid grid-cols-3 gap-3">
-          <StatCard
-            title="Latest"
-            value={fmt(latest, 1)}
-            subtitle="°C delta"
-          />
-          <StatCard
-            title="Average"
-            value={fmt(avg, 1)}
-            subtitle="°C delta"
-          />
+          <StatCard title="Latest" value={fmt(latest, 1)} subtitle="°C delta" />
+          <StatCard title="Average" value={fmt(avg, 1)} subtitle="°C delta" />
           <StatCard
             title="Range"
             value={`${fmt(minMax.min, 1)} to ${fmt(minMax.max, 1)}`}
@@ -306,7 +314,9 @@ export default function SkinTemperaturePage() {
                           {fmt(delta, 2)}°C
                         </div>
                       </td>
-                      <td className={`whitespace-nowrap px-4 py-3 text-sm font-medium ${statusColor}`}>
+                      <td
+                        className={`whitespace-nowrap px-4 py-3 text-sm font-medium ${statusColor}`}
+                      >
                         {status}
                       </td>
                     </tr>
@@ -319,19 +329,26 @@ export default function SkinTemperaturePage() {
 
         {/* Info Section */}
         <div className="rounded-lg border border-zinc-700 bg-zinc-900/40 p-6">
-          <h3 className="font-semibold text-zinc-200 mb-3">About Skin Temperature</h3>
+          <h3 className="font-semibold text-zinc-200 mb-3">
+            About Skin Temperature
+          </h3>
           <ul className="text-sm text-zinc-400 space-y-2">
             <li>
-              <strong>Temperature Delta (°C):</strong> Skin temperature relative to your personal baseline. Measured nightly by Fitbit.
+              <strong>Temperature Delta (°C):</strong> Skin temperature relative
+              to your personal baseline. Measured nightly by Fitbit.
             </li>
             <li>
-              <strong>Positive values:</strong> Indicate skin temperature higher than your normal baseline, which may suggest stress, illness, or hormonal changes.
+              <strong>Positive values:</strong> Indicate skin temperature higher
+              than your normal baseline, which may suggest stress, illness, or
+              hormonal changes.
             </li>
             <li>
-              <strong>Negative values:</strong> Indicate cooler than normal skin temperature.
+              <strong>Negative values:</strong> Indicate cooler than normal skin
+              temperature.
             </li>
             <li>
-              <strong>Use case:</strong> Skin temperature variation can be an early indicator of illness or unusual health events.
+              <strong>Use case:</strong> Skin temperature variation can be an
+              early indicator of illness or unusual health events.
             </li>
           </ul>
         </div>
