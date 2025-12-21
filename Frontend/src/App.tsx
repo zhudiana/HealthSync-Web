@@ -16,6 +16,7 @@ import SleepPage from "./pages/metrics/Sleep";
 import CaloriesPage from "./pages/metrics/Calories";
 import ECGPage from "./pages/metrics/ECG";
 import BreathingRatePage from "./pages/metrics/BreathingRate";
+import RestingHeartRatePage from "./pages/metrics/RestingHeartRate";
 
 function Protected({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuth();
@@ -123,6 +124,14 @@ export default function App() {
             element={
               <Protected>
                 <BreathingRatePage />
+              </Protected>
+            }
+          />
+          <Route
+            path="/metrics/resting-heart-rate"
+            element={
+              <Protected>
+                <RestingHeartRatePage />
               </Protected>
             }
           />

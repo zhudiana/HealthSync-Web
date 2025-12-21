@@ -347,6 +347,33 @@ export const metrics = {
     };
   },
 
+  restingHRHistory: async (token: string, start: string, end: string) => {
+    // Fetch resting HR data for each day in the range
+    const items: { date: string; resting_hr: number | null }[] = [];
+    const current = new Date(start + "T00:00:00");
+    const endDate = new Date(end + "T00:00:00");
+
+    while (current <= endDate) {
+      const dateStr = current.toISOString().split("T")[0];
+      try {
+        const data = await metrics.restingHrToday(token, dateStr);
+        items.push({
+          date: data.date,
+          resting_hr: data.resting_hr,
+        });
+      } catch (e) {
+        console.warn(`Failed to fetch resting HR for ${dateStr}:`, e);
+      }
+      current.setDate(current.getDate() + 1);
+    }
+
+    return {
+      start,
+      end,
+      items,
+    };
+  },
+
   hrvToday: async (token: string, date?: string) => {
     const u = new URL(`${API_BASE_URL}/fitbit/metrics/hrv/today`);
     u.searchParams.set("access_token", token);

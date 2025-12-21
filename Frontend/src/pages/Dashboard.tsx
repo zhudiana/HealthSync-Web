@@ -907,7 +907,7 @@ export default function Dashboard() {
                 icon={<HeartPulse className="h-4 w-4" />}
                 value={restingHR ?? "—"}
                 unit="bpm"
-                to="/metrics/heart-rate"
+                to="/metrics/resting-heart-rate"
                 loading={loading.restingHR}
               />
               <StatCard
