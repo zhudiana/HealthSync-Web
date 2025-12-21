@@ -948,6 +948,7 @@ export default function Dashboard() {
               }
               unit="breaths/min"
               foot="Daily Average"
+              to="/metrics/breathing-rate"
               loading={loading.respiratoryRate}
             />
           )}
