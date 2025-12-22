@@ -326,32 +326,6 @@ export default function SkinTemperaturePage() {
             </table>
           </div>
         )}
-
-        {/* Info Section */}
-        <div className="rounded-lg border border-zinc-700 bg-zinc-900/40 p-6">
-          <h3 className="font-semibold text-zinc-200 mb-3">
-            About Skin Temperature
-          </h3>
-          <ul className="text-sm text-zinc-400 space-y-2">
-            <li>
-              <strong>Temperature Delta (°C):</strong> Skin temperature relative
-              to your personal baseline. Measured nightly by Fitbit.
-            </li>
-            <li>
-              <strong>Positive values:</strong> Indicate skin temperature higher
-              than your normal baseline, which may suggest stress, illness, or
-              hormonal changes.
-            </li>
-            <li>
-              <strong>Negative values:</strong> Indicate cooler than normal skin
-              temperature.
-            </li>
-            <li>
-              <strong>Use case:</strong> Skin temperature variation can be an
-              early indicator of illness or unusual health events.
-            </li>
-          </ul>
-        </div>
       </main>
     </div>
   );

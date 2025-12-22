@@ -333,38 +333,6 @@ export default function RestingHeartRatePage() {
             </table>
           </div>
         )}
-
-        {/* Info Section */}
-        <div className="rounded-lg border border-zinc-700 bg-zinc-900/40 p-6">
-          <h3 className="font-semibold text-zinc-200 mb-3">
-            About Resting Heart Rate
-          </h3>
-          <ul className="text-sm text-zinc-400 space-y-2">
-            <li>
-              <strong>Resting Heart Rate (RHR):</strong> Your heart rate when
-              you're at complete rest, typically measured first thing in the
-              morning before getting out of bed.
-            </li>
-            <li>
-              <strong>Health Indicator:</strong> A lower RHR generally indicates
-              better cardiovascular fitness. Athletes often have RHRs in the
-              40-60 bpm range, while a typical adult has an RHR of 60-100 bpm.
-            </li>
-            <li>
-              <strong>Fitness Improvement:</strong> Regular exercise can lower
-              your RHR over time, signaling improved cardiovascular health.
-            </li>
-            <li>
-              <strong>Stress Indicator:</strong> A higher RHR than your normal
-              baseline can indicate stress, illness, or overtraining.
-            </li>
-            <li>
-              <strong>Tracking Trends:</strong> Monitor your RHR trends over
-              weeks and months to identify patterns and improvements in your
-              fitness level.
-            </li>
-          </ul>
-        </div>
       </main>
     </div>
   );

@@ -389,36 +389,6 @@ export default function BreathingRatePage() {
             </table>
           </div>
         )}
-
-        {/* Info Section */}
-        <div className="rounded-lg border border-zinc-700 bg-zinc-900/40 p-6">
-          <h3 className="font-semibold text-zinc-200 mb-3">
-            About Breathing Rate
-          </h3>
-          <ul className="text-sm text-zinc-400 space-y-2">
-            <li>
-              <strong>Full Day Average:</strong> Your average breathing rate
-              throughout the entire day, measured in breaths per minute.
-            </li>
-            <li>
-              <strong>Sleep Stage Averages:</strong> Breathing rates vary during
-              different sleep stages (deep sleep, light sleep, REM sleep).
-            </li>
-            <li>
-              <strong>Normal Range:</strong> A typical resting breathing rate
-              for adults is 12-20 breaths per minute.
-            </li>
-            <li>
-              <strong>Health Indicator:</strong> Changes in breathing rate can
-              indicate stress, fitness level, and overall respiratory health.
-            </li>
-            <li>
-              <strong>Sleep Insight:</strong> Different sleep stages naturally
-              have different breathing patterns - REM sleep typically has more
-              variable breathing rates.
-            </li>
-          </ul>
-        </div>
       </main>
     </div>
   );

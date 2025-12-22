@@ -290,39 +290,6 @@ export default function CurrentHeartRatePage() {
             </div>
           </div>
         )}
-
-        {/* Info Section */}
-        <div className="rounded-lg border border-zinc-700 bg-zinc-900/40 p-6">
-          <h3 className="font-semibold text-zinc-200 mb-3">
-            About Current Heart Rate
-          </h3>
-          <ul className="text-sm text-zinc-400 space-y-2">
-            <li>
-              <strong>Real-time Monitoring:</strong> This page displays your
-              current heart rate as measured by your Fitbit device. Data is
-              typically updated every few minutes.
-            </li>
-            <li>
-              <strong>Normal Ranges:</strong> Resting HR is typically 60-100
-              bpm, but trained athletes may have lower rates. Active HR varies
-              greatly depending on exercise intensity.
-            </li>
-            <li>
-              <strong>Auto-refresh:</strong> Enable auto-refresh to update your
-              heart rate every 30 seconds without manually clicking refresh.
-            </li>
-            <li>
-              <strong>Data Freshness:</strong> The "Data Age" shows how old the
-              current reading is. Newer data is more relevant to your current
-              state.
-            </li>
-            <li>
-              <strong>Factors Affecting HR:</strong> Exercise, stress, caffeine,
-              sleep quality, and overall fitness all influence your heart rate.
-              Track trends over time for insights.
-            </li>
-          </ul>
-        </div>
       </main>
     </div>
   );

@@ -274,36 +274,6 @@ export default function HRVPage() {
             </table>
           </div>
         )}
-
-        {/* Info section */}
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-6">
-          <h3 className="text-lg font-semibold mb-4 text-zinc-100">
-            About Heart Rate Variability (HRV)
-          </h3>
-          <div className="text-sm text-zinc-200 space-y-3 leading-relaxed">
-            <p>
-              Heart Rate Variability (HRV) measures the variation in time
-              between your heartbeats. It's calculated as the Root Mean Square
-              of Successive Differences (RMSSD) in milliseconds.
-            </p>
-            <p>
-              <strong>Higher HRV values</strong> generally indicate better
-              cardiovascular fitness and recovery, as they suggest your
-              parasympathetic nervous system (rest-and-digest) is active.
-            </p>
-            <p>
-              <strong>Lower HRV values</strong> may indicate stress, fatigue,
-              illness, or inadequate recovery. However, HRV varies significantly
-              between individuals and should be interpreted in the context of
-              your own baseline and lifestyle.
-            </p>
-            <p>
-              HRV is typically measured during sleep when your body is most
-              relaxed. Track trends over time to identify patterns in your
-              stress and recovery levels.
-            </p>
-          </div>
-        </div>
       </main>
     </div>
   );
