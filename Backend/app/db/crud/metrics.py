@@ -1,5 +1,5 @@
 from __future__ import annotations
-from datetime import datetime, date, time
+from datetime import datetime, date, time, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy.dialects.postgresql import insert
 from app.db.models.steps import StepsDaily, StepsIntraday
@@ -315,6 +315,37 @@ def _upsert_spo2_reading(
         },
     )
     db.execute(stmt)
+
+
+def get_spo2_by_date_range(
+    db: Session,
+    *,
+    user_id,
+    provider: str,
+    start_date: date,
+    end_date: date,
+    tz_str: str = "UTC"
+) -> list[SpO2Reading]:
+    """
+    Get SpO2 readings for a date range (local time).
+    Converts local dates to UTC for database query.
+    """
+    tz = ZoneInfo(tz_str)
+    
+    # Convert local date range to UTC
+    start_local = datetime.combine(start_date, time.min, tzinfo=tz)
+    next_day = end_date + timedelta(days=1)
+    end_local = datetime.combine(next_day, time.min, tzinfo=tz)
+    
+    from sqlalchemy import select
+    stmt = select(SpO2Reading).where(
+        SpO2Reading.user_id == user_id,
+        SpO2Reading.provider == provider,
+        SpO2Reading.measured_at_utc >= start_local,
+        SpO2Reading.measured_at_utc < end_local
+    ).order_by(SpO2Reading.measured_at_utc)
+    
+    return list(db.execute(stmt).scalars().all())
 
 
 def _upsert_temperature_reading(

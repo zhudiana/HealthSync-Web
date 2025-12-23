@@ -6,6 +6,7 @@ import {
   withingsSpO2,
   withingsSpO2Cached,
   fitbitSpo2History,
+  fitbitSpo2HistoryCached,
   metrics,
 } from "@/lib/api";
 

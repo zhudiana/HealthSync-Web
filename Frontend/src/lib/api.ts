@@ -720,6 +720,33 @@ export async function fitbitSpo2History(
   };
 }
 
+export async function fitbitSpo2HistoryCached(
+  accessToken: string,
+  dateFrom: string,
+  dateTo: string
+) {
+  const url = new URL(`${API_BASE_URL}/fitbit/metrics/spo2-nightly/cached`);
+  url.searchParams.set("access_token", accessToken);
+  url.searchParams.set("start", dateFrom);
+  url.searchParams.set("end", dateTo);
+
+  const res = await fetch(url.toString());
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "fitbit spo2 cached failed");
+
+  return data as {
+    start: string;
+    end: string;
+    items: Array<{
+      date: string;
+      ts: number;
+      percent: number | null;
+      min: number | null;
+    }>;
+    fromCache: boolean;
+  };
+}
+
 // ----------------------------------------------------------
 // ---------- Withings ----------
 export async function getWithingsAuthUrl(scope: string) {
