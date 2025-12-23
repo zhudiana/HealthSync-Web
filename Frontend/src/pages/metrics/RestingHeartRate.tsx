@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowLeft, RefreshCw, Heart } from "lucide-react";
-import { metrics } from "@/lib/api";
+import { metrics, fitbitRestingHRHistoryCached } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 
 // recharts
@@ -103,7 +103,24 @@ export default function RestingHeartRatePage() {
       const token = await getAccessToken();
       if (!token) throw new Error("Not authenticated");
 
-      const data = await metrics.restingHRHistory(token, startYmd, endYmd);
+      // --- Try cache first ---
+      let data = null;
+      try {
+        const cached = await fitbitRestingHRHistoryCached(
+          token,
+          startYmd,
+          endYmd
+        );
+        if (cached?.items) {
+          data = cached;
+          console.log("Using cached Fitbit resting HR data");
+        }
+      } catch (cacheErr) {
+        // Cache miss or error, fall back to live API
+        console.log("Cache miss, fetching from live API:", cacheErr);
+        data = await metrics.restingHRHistory(token, startYmd, endYmd);
+      }
+
       if (!data?.items?.length) {
         setSeries([]);
         setStats({
@@ -144,12 +161,14 @@ export default function RestingHeartRatePage() {
         max,
       });
 
-      // Persist each reading in background (silent fail)
-      filtered.forEach((it) => {
-        metrics.restingHrToday(token, it.date).catch((e) => {
-          console.warn(`Failed to persist resting HR for ${it.date}:`, e);
+      // Persist each reading in background (only if not from cache)
+      if (!(data as any).fromCache) {
+        filtered.forEach((it) => {
+          metrics.restingHrToday(token, it.date).catch((e) => {
+            console.warn(`Failed to persist resting HR for ${it.date}:`, e);
+          });
         });
-      });
+      }
     } catch (e: any) {
       setError(e?.message || "Failed to load resting heart rate data");
       setSeries([]);

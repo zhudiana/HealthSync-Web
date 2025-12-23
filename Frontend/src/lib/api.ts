@@ -582,6 +582,35 @@ export async function fitbitWeightLatest(accessToken: string) {
   } | null;
 }
 
+export async function fitbitWeightHistoryCached(
+  accessToken: string,
+  dateFrom: string,
+  dateTo: string
+) {
+  const url = new URL(`${API_BASE_URL}/fitbit/metrics/weight/history/cached`);
+  url.searchParams.set("access_token", accessToken);
+  url.searchParams.set("start", dateFrom);
+  url.searchParams.set("end", dateTo);
+
+  const res = await fetch(url.toString());
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "fitbit weight cached failed");
+
+  return data as {
+    start: string;
+    end: string;
+    items: Array<{
+      date: string;
+      weight_kg: number;
+      fat_pct: number | null;
+      bmi: number | null;
+      logId: string;
+      source: string;
+    }>;
+    fromCache: boolean;
+  };
+}
+
 // ---------- Fitbit Distance History ----------
 export async function fitbitDistanceHistory(
   accessToken: string,
@@ -742,6 +771,197 @@ export async function fitbitSpo2HistoryCached(
       ts: number;
       percent: number | null;
       min: number | null;
+    }>;
+    fromCache: boolean;
+  };
+}
+
+export async function fitbitCaloriesHistoryCached(
+  accessToken: string,
+  dateFrom: string,
+  dateTo: string
+) {
+  const url = new URL(`${API_BASE_URL}/fitbit/metrics/calories/history/cached`);
+  url.searchParams.set("access_token", accessToken);
+  url.searchParams.set("start", dateFrom);
+  url.searchParams.set("end", dateTo);
+
+  const res = await fetch(url.toString());
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "fitbit calories cached failed");
+
+  return data as {
+    start: string;
+    end: string;
+    items: Array<{
+      date: string;
+      calories_out: number | null;
+      activity_calories: number | null;
+      bmr_calories: number | null;
+    }>;
+    fromCache: boolean;
+  };
+}
+
+export async function fitbitRestingHRHistoryCached(
+  accessToken: string,
+  dateFrom: string,
+  dateTo: string
+) {
+  const url = new URL(`${API_BASE_URL}/fitbit/metrics/resting-hr/daily/cached`);
+  url.searchParams.set("access_token", accessToken);
+  url.searchParams.set("start", dateFrom);
+  url.searchParams.set("end", dateTo);
+
+  const res = await fetch(url.toString());
+  const data = await res.json();
+  if (!res.ok)
+    throw new Error(data?.detail || "fitbit resting hr cached failed");
+
+  return data as {
+    start: string;
+    end: string;
+    items: Array<{
+      date: string;
+      resting_hr: number | null;
+      min_bpm: number | null;
+      max_bpm: number | null;
+    }>;
+    fromCache: boolean;
+  };
+}
+
+export async function fitbitTemperatureHistoryCached(
+  accessToken: string,
+  dateFrom: string,
+  dateTo: string
+) {
+  const url = new URL(
+    `${API_BASE_URL}/fitbit/metrics/temperature/history/cached`
+  );
+  url.searchParams.set("access_token", accessToken);
+  url.searchParams.set("start", dateFrom);
+  url.searchParams.set("end", dateTo);
+
+  const res = await fetch(url.toString());
+  const data = await res.json();
+  if (!res.ok)
+    throw new Error(data?.detail || "fitbit temperature cached failed");
+
+  return data as {
+    start: string;
+    end: string;
+    items: Array<{
+      date: string;
+      ts: number;
+      delta_c: number | null;
+    }>;
+    fromCache: boolean;
+  };
+}
+
+export async function fitbitHRVHistoryCached(
+  accessToken: string,
+  dateFrom: string,
+  dateTo: string
+) {
+  const url = new URL(`${API_BASE_URL}/fitbit/metrics/hrv/history/cached`);
+  url.searchParams.set("access_token", accessToken);
+  url.searchParams.set("start", dateFrom);
+  url.searchParams.set("end", dateTo);
+
+  const res = await fetch(url.toString());
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "fitbit hrv cached failed");
+
+  return data as {
+    start: string;
+    end: string;
+    items: Array<{
+      date: string;
+      rmssd_ms: number | null;
+    }>;
+    fromCache: boolean;
+  };
+}
+
+export async function fitbitBreathingRateHistoryCached(
+  accessToken: string,
+  dateFrom: string,
+  dateTo: string
+) {
+  const url = new URL(
+    `${API_BASE_URL}/fitbit/metrics/respiratory-rate/history/cached`
+  );
+  url.searchParams.set("access_token", accessToken);
+  url.searchParams.set("start", dateFrom);
+  url.searchParams.set("end", dateTo);
+
+  const res = await fetch(url.toString());
+  const data = await res.json();
+  if (!res.ok)
+    throw new Error(data?.detail || "fitbit breathing rate cached failed");
+
+  return data as {
+    start: string;
+    end: string;
+    items: Array<{
+      date: string;
+      full_day_avg: number | null;
+      deep_sleep_avg: number | null;
+      light_sleep_avg: number | null;
+      rem_sleep_avg: number | null;
+    }>;
+    fromCache: boolean;
+  };
+}
+
+export async function fitbitDistanceHistoryCached(
+  accessToken: string,
+  dateFrom: string,
+  dateTo: string
+) {
+  const url = new URL(`${API_BASE_URL}/fitbit/metrics/distance/history/cached`);
+  url.searchParams.set("access_token", accessToken);
+  url.searchParams.set("start", dateFrom);
+  url.searchParams.set("end", dateTo);
+
+  const res = await fetch(url.toString());
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "fitbit distance cached failed");
+
+  return data as {
+    start: string;
+    end: string;
+    items: Array<{
+      date: string;
+      distance_km: number | null;
+    }>;
+    fromCache: boolean;
+  };
+}
+
+export async function fitbitSleepHistoryCached(
+  accessToken: string,
+  dateFrom: string,
+  dateTo: string
+) {
+  const url = new URL(`${API_BASE_URL}/fitbit/metrics/sleep/history/cached`);
+  url.searchParams.set("access_token", accessToken);
+  url.searchParams.set("start", dateFrom);
+  url.searchParams.set("end", dateTo);
+
+  const res = await fetch(url.toString());
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "fitbit sleep cached failed");
+
+  return data as {
+    start: string;
+    end: string;
+    items: Array<{
+      date: string;
+      total_min: number;
+      hours: number;
     }>;
     fromCache: boolean;
   };

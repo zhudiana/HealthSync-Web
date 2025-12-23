@@ -629,6 +629,31 @@ def get_distance_daily(
         "distance_km": record.distance_km
     }
 
+
+def get_distance_by_date_range(
+    db: Session,
+    user_id: str,
+    provider: str,
+    start_date: date,
+    end_date: date
+) -> list:
+    """
+    Retrieve distance readings from database for a date range.
+    Returns list of DistanceDaily objects sorted by date_local.
+    """
+    query = (
+        db.query(DistanceDaily)
+        .filter(
+            DistanceDaily.user_id == user_id,
+            DistanceDaily.provider == provider,
+            DistanceDaily.date_local >= start_date,
+            DistanceDaily.date_local <= end_date,
+        )
+        .order_by(DistanceDaily.date_local)
+        .all()
+    )
+    return query
+
 def get_temperature_daily(
     db: Session, 
     user_id: str, 
@@ -668,3 +693,28 @@ def get_temperature_daily(
     return {
         "items": items
     }
+
+
+def get_temperature_by_date_range(
+    db: Session,
+    user_id: str,
+    provider: str,
+    start_date: date,
+    end_date: date
+) -> list:
+    """
+    Retrieve temperature readings from database for a date range.
+    Returns list of TemperatureReading objects sorted by measured_at_utc.
+    """
+    query = (
+        db.query(TemperatureReading)
+        .filter(
+            TemperatureReading.user_id == user_id,
+            TemperatureReading.provider == provider,
+            TemperatureReading.measured_at_utc >= datetime.combine(start_date, datetime.min.time()),
+            TemperatureReading.measured_at_utc <= datetime.combine(end_date, datetime.max.time()),
+        )
+        .order_by(TemperatureReading.measured_at_utc)
+        .all()
+    )
+    return query

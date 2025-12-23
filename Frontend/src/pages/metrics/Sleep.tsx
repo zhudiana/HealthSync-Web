@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { ChevronLeft, RefreshCw, ChevronDown } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
-import { metrics } from "@/lib/api";
+import { metrics, fitbitSleepHistoryCached } from "@/lib/api";
 import {
   ResponsiveContainer,
   LineChart,
@@ -64,16 +64,35 @@ export default function SleepPage() {
       const token = await getAccessToken();
       if (!token) throw new Error("Not authenticated");
 
-      // Fetch sleep data for date range
-      const data = await metrics.sleepHistory(token, startYmd, endYmd);
+      // --- Try cache first ---
+      let data = null;
+      try {
+        const cached = await fitbitSleepHistoryCached(token, startYmd, endYmd);
+        if (cached?.items) {
+          data = cached;
+          console.log("Using cached Fitbit sleep data");
+        }
+      } catch (cacheErr) {
+        // Cache miss or error, fall back to live API
+        console.log("Cache miss, fetching from live API:", cacheErr);
+        data = await metrics.sleepHistory(token, startYmd, endYmd);
+      }
+
       if (!data?.items?.length) {
         setItems([]);
         setLatest(null);
         return;
       }
 
+      // Convert cached format to expected format
+      const converted = data.items.map((it: any) => ({
+        date: it.date,
+        hoursAsleep: it.hours !== undefined ? it.hours : it.hoursAsleep,
+        hoursAsleepMain: it.hoursAsleepMain || null,
+      }));
+
       // Filter out entries with null hoursAsleep
-      const filtered = data.items.filter((it) => it.hoursAsleep != null);
+      const filtered = converted.filter((it) => it.hoursAsleep != null);
 
       // Sort by date (newest first for latest)
       const sorted = filtered.sort((a, b) => b.date.localeCompare(a.date));
@@ -81,14 +100,14 @@ export default function SleepPage() {
       setItems(filtered.sort((a, b) => a.date.localeCompare(b.date)));
       setLatest(sorted.length > 0 ? sorted[0].hoursAsleep : null);
 
-      // Persist each sleep reading in background (silent fail)
-      filtered.forEach((it) => {
-        try {
-          metrics.sleepToday(token, it.date);
-        } catch (e) {
-          console.warn(`Failed to persist sleep for ${it.date}:`, e);
-        }
-      });
+      // Persist each sleep reading in background (only if not from cache)
+      if (!(data as any).fromCache) {
+        filtered.forEach((it) => {
+          metrics.sleepToday(token, it.date).catch((e) => {
+            console.warn(`Failed to persist sleep for ${it.date}:`, e);
+          });
+        });
+      }
     } catch (e: any) {
       setError(e?.message || "Failed to load sleep data");
       setItems([]);

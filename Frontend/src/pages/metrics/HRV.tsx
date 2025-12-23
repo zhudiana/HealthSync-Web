@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { ChevronLeft, RefreshCw } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
-import { metrics } from "@/lib/api";
+import { metrics, fitbitHRVHistoryCached } from "@/lib/api";
 import {
   ResponsiveContainer,
   LineChart,
@@ -57,8 +57,20 @@ export default function HRVPage() {
       const token = await getAccessToken();
       if (!token) throw new Error("Not authenticated");
 
-      // Fetch HRV data for date range
-      const data = await metrics.hrv(token, startYmd, endYmd);
+      // --- Try cache first ---
+      let data = null;
+      try {
+        const cached = await fitbitHRVHistoryCached(token, startYmd, endYmd);
+        if (cached?.items) {
+          data = cached;
+          console.log("Using cached Fitbit HRV data");
+        }
+      } catch (cacheErr) {
+        // Cache miss or error, fall back to live API
+        console.log("Cache miss, fetching from live API:", cacheErr);
+        data = await metrics.hrv(token, startYmd, endYmd);
+      }
+
       if (!data?.items?.length) {
         setItems([]);
         setLatest(null);
@@ -76,14 +88,14 @@ export default function HRVPage() {
       setItems(filtered.sort((a, b) => a.date.localeCompare(b.date)));
       setLatest(sorted.length > 0 ? sorted[0].rmssd_ms : null);
 
-      // Persist each HRV reading in background (silent fail)
-      filtered.forEach((it) => {
-        try {
-          metrics.hrvToday(token, it.date);
-        } catch (e) {
-          console.warn(`Failed to persist HRV for ${it.date}:`, e);
-        }
-      });
+      // Persist each HRV reading in background (only if not from cache)
+      if (!(data as any).fromCache) {
+        filtered.forEach((it) => {
+          metrics.hrvToday(token, it.date).catch((e) => {
+            console.warn(`Failed to persist HRV for ${it.date}:`, e);
+          });
+        });
+      }
     } catch (e: any) {
       setError(e?.message || "Failed to load HRV data");
       setItems([]);

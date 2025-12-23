@@ -9,6 +9,7 @@ import {
   withingsWeightHistory,
   withingsWeightHistoryCached,
   fitbitWeightHistory,
+  fitbitWeightHistoryCached,
   fitbitWeightLatest,
   metrics,
 } from "@/lib/api";
@@ -112,10 +113,29 @@ export default function Weights() {
           setLatest(null);
         }
       } else {
-        // --- Fitbit: fetch history and latest, and persist ---
-        const hist = await fitbitWeightHistory(accessToken, dateFrom, dateTo);
+        // --- Fitbit: try cache first ---
+        let hist = null;
+        try {
+          const cached = await fitbitWeightHistoryCached(
+            accessToken,
+            dateFrom,
+            dateTo
+          );
+          if (
+            cached?.items &&
+            Array.isArray(cached.items) &&
+            cached.items.length > 0
+          ) {
+            hist = cached;
+            console.log("Using cached Fitbit weight data");
+          }
+        } catch (cacheErr) {
+          // Cache miss or error, fall back to live API
+          console.log("Cache miss, fetching from live API:", cacheErr);
+          hist = await fitbitWeightHistory(accessToken, dateFrom, dateTo);
+        }
 
-        const daily: WeightPoint[] = (hist.weight || [])
+        const daily: WeightPoint[] = (hist?.weight || hist?.items || [])
           .map((it: any) => {
             if (!it.date || it.weight_kg == null) return null;
             const point: WeightPoint = {
@@ -124,12 +144,13 @@ export default function Weights() {
               bmi: it.bmi ?? null,
               fat_pct: it.fat_pct ?? null,
             };
-            // Persist the reading silently in background
-            try {
-              metrics.weight(accessToken, it.date);
-            } catch (e) {
-              console.warn(`Failed to persist weight for ${it.date}:`, e);
-              // Continue anyway, data is still displayed
+            // Persist the reading silently in background (only if not from cache)
+            if (!(hist as any).fromCache) {
+              try {
+                metrics.weight(accessToken, it.date);
+              } catch (e) {
+                console.warn(`Failed to persist weight for ${it.date}:`, e);
+              }
             }
             return point;
           })

@@ -15,6 +15,7 @@ import {
   stepsSeries,
   withingsDistanceDaily,
   fitbitDistanceHistory,
+  fitbitDistanceHistoryCached,
   metrics,
 } from "@/lib/api";
 
@@ -137,8 +138,23 @@ export default function Distance() {
           currentDate.setDate(currentDate.getDate() + 1);
         }
       } else {
-        // --- Fitbit: fetch history for date range and persist ---
-        const hist = await fitbitDistanceHistory(accessToken, dateFrom, dateTo);
+        // --- Fitbit: cache-first strategy ---
+        let hist = null;
+        try {
+          const cached = await fitbitDistanceHistoryCached(
+            accessToken,
+            dateFrom,
+            dateTo
+          );
+          if (cached?.items) {
+            hist = cached;
+            console.log("Using cached Fitbit distance data");
+          }
+        } catch (cacheErr) {
+          // Cache miss or error, fall back to live API
+          console.log("Cache miss, fetching from live API:", cacheErr);
+          hist = await fitbitDistanceHistory(accessToken, dateFrom, dateTo);
+        }
 
         hist.items.forEach((it: any) => {
           if (it.date && it.distance_km != null) {
@@ -146,12 +162,14 @@ export default function Distance() {
               date: it.date,
               distance_km: it.distance_km,
             });
-            // Persist the reading silently in background
-            try {
-              metrics.distance(accessToken, it.date);
-            } catch (e) {
-              console.warn(`Failed to persist distance for ${it.date}:`, e);
-              // Continue anyway, data is still displayed
+            // Persist the reading silently in background (only if not from cache)
+            if (!(hist as any).fromCache) {
+              try {
+                metrics.distance(accessToken, it.date);
+              } catch (e) {
+                console.warn(`Failed to persist distance for ${it.date}:`, e);
+                // Continue anyway, data is still displayed
+              }
             }
           }
         });

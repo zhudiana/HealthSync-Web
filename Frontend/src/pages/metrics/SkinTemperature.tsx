@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowLeft, RefreshCw, Thermometer } from "lucide-react";
-import { metrics } from "@/lib/api";
+import { metrics, fitbitTemperatureHistoryCached } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 
 // recharts
@@ -88,7 +88,24 @@ export default function SkinTemperaturePage() {
       const token = await getAccessToken();
       if (!token) throw new Error("Not authenticated");
 
-      const data = await metrics.temperatureHistory(token, startYmd, endYmd);
+      // --- Try cache first ---
+      let data = null;
+      try {
+        const cached = await fitbitTemperatureHistoryCached(
+          token,
+          startYmd,
+          endYmd
+        );
+        if (cached?.items) {
+          data = cached;
+          console.log("Using cached Fitbit temperature data");
+        }
+      } catch (cacheErr) {
+        // Cache miss or error, fall back to live API
+        console.log("Cache miss, fetching from live API:", cacheErr);
+        data = await metrics.temperatureHistory(token, startYmd, endYmd);
+      }
+
       if (!data?.items?.length) {
         setSeries([]);
         setLatest(null);
@@ -131,12 +148,14 @@ export default function SkinTemperaturePage() {
       setAvg(tempAvg);
       setMinMax({ min: tempMin, max: tempMax });
 
-      // Persist each reading in background (silent fail)
-      filtered.forEach((it) => {
-        metrics.temperatureToday(token, it.date).catch((e) => {
-          console.warn(`Failed to persist temperature for ${it.date}:`, e);
+      // Persist each reading in background (only if not from cache)
+      if (!(data as any).fromCache) {
+        filtered.forEach((it) => {
+          metrics.temperatureToday(token, it.date).catch((e) => {
+            console.warn(`Failed to persist temperature for ${it.date}:`, e);
+          });
         });
-      });
+      }
     } catch (e: any) {
       setError(e?.message || "Failed to load temperature data");
       setSeries([]);

@@ -10,10 +10,10 @@ from app.db.crud import weights as weights_crud
 from app.db.crud import sleep as sleep_crud
 from app.db.crud import calories as calories_crud
 from app.db.crud import heart_rate as heart_rate_crud
-from app.db.crud import heart_rate_intraday as heart_rate_intraday_crud
 from app.db.crud import hrv as hrv_crud
+from app.db.crud import heart_rate_intraday as heart_rate_intraday_crud
 from app.db.crud import breathing_rate as breathing_rate_crud
-from app.db.crud.metrics import _upsert_spo2_reading, _upsert_temperature_reading, get_spo2_by_date_range
+from app.db.crud.metrics import _upsert_spo2_reading, _upsert_temperature_reading, get_spo2_by_date_range, get_temperature_by_date_range, get_distance_by_date_range
 from app.dependencies import get_db
 
 
@@ -409,6 +409,83 @@ def fitbit_sleep_today(
     }
 
 
+@router.get("/sleep/history/cached")
+def fitbit_sleep_history_cached(
+    access_token: str,
+    start: str = Query(..., description="YYYY-MM-DD"),
+    end: str = Query(..., description="YYYY-MM-DD"),
+    db: Session = Depends(get_db)
+):
+    """
+    Return Fitbit sleep data from cache (database) for a date range.
+    Returns 404 if no cached data is found for the date range.
+    This endpoint does NOT make API calls - it only returns already-cached data.
+    """
+    try:
+        # Resolve user from access token
+        user, tz = _resolve_user_and_tz(db, access_token)
+        
+        # Convert dates to datetime objects
+        try:
+            start_date = datetime.strptime(start, "%Y-%m-%d")
+            end_date = datetime.strptime(end, "%Y-%m-%d")
+            # Convert to UTC datetime range
+            tz_obj = ZoneInfo(tz)
+            start_local = start_date.replace(tzinfo=tz_obj)
+            end_local = end_date.replace(tzinfo=tz_obj) + timedelta(days=1)
+            start_utc = start_local.astimezone(timezone.utc)
+            end_utc = end_local.astimezone(timezone.utc)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+        
+        # Query existing data from database
+        db_data = sleep_crud.get_sleep_by_date(
+            db,
+            user_id=user.id,
+            provider="fitbit",
+            start_at_utc=start_utc,
+            end_at_utc=end_utc
+        )
+        
+        if not db_data:
+            raise HTTPException(status_code=404, detail="No cached sleep data found for this date range")
+        
+        # Format the response - group by local date
+        from collections import defaultdict
+        by_date = defaultdict(lambda: {"total_min": 0, "count": 0})
+        
+        for session in db_data:
+            local_date = session.start_at_utc.astimezone(ZoneInfo(tz)).date()
+            date_str = local_date.isoformat()
+            if session.total_min:
+                by_date[date_str]["total_min"] += session.total_min
+                by_date[date_str]["count"] += 1
+        
+        # Convert to items
+        items = [
+            {
+                "date": date_str,
+                "total_min": data["total_min"],
+                "hours": round(data["total_min"] / 60, 2)
+            }
+            for date_str, data in sorted(by_date.items())
+            if data["total_min"] > 0
+        ]
+        
+        if not items:
+            raise HTTPException(status_code=404, detail="No cached sleep data with valid values found for this date range")
+        
+        return {
+            "start": start,
+            "end": end,
+            "items": items,
+            "fromCache": True
+        }
+        
+    except HTTPException:
+        raise
+
+
 @router.get("/steps/today")
 def fitbit_steps_today(
     access_token: str,
@@ -611,6 +688,71 @@ def fitbit_weight_logs(
     }
 
 
+@router.get("/weight/history/cached")
+def fitbit_weight_history_cached(
+    access_token: str,
+    start: str = Query(..., description="YYYY-MM-DD"),
+    end: str = Query(..., description="YYYY-MM-DD"),
+    db: Session = Depends(get_db)
+):
+    """
+    Return Fitbit weight data from cache (database) for a date range.
+    Returns 404 if no cached data is found for the date range.
+    This endpoint does NOT make API calls - it only returns already-cached data.
+    """
+    try:
+        # Resolve user from access token
+        user, tz = _resolve_user_and_tz(db, access_token)
+        
+        # Convert dates to datetime.date objects
+        try:
+            start_date = datetime.strptime(start, "%Y-%m-%d").date()
+            end_date = datetime.strptime(end, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+        
+        # Convert to datetime for the query (weights use datetime, not just date)
+        start_dt = datetime.combine(start_date, datetime.min.time(), tzinfo=timezone.utc)
+        end_dt = datetime.combine(end_date, datetime.max.time(), tzinfo=timezone.utc)
+        
+        # Query existing data from database
+        db_data = weights_crud.get_weights_by_date_range(
+            db,
+            user_id=user.id,
+            provider="fitbit",
+            start_date=start_dt,
+            end_date=end_dt
+        )
+        
+        if not db_data:
+            raise HTTPException(status_code=404, detail="No cached weight data found for this date range")
+        
+        # Format the response - reverse since DB returns desc, we want asc
+        items = [
+            {
+                "date": reading.measured_at_utc.astimezone(ZoneInfo(tz)).date().isoformat(),
+                "weight_kg": reading.weight_kg,
+                "fat_pct": reading.fat_pct,
+                "bmi": None,  # Not stored in our DB
+                "logId": reading.provider_measure_id,
+                "source": reading.device
+            }
+            for reading in reversed(db_data)
+        ]
+        
+        return {
+            "start": start,
+            "end": end,
+            "items": items,
+            "fromCache": True
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch cached weight data: {str(e)}")
+
+
 @router.get("/distance")
 def fitbit_distance(
     access_token: str,
@@ -664,6 +806,64 @@ def fitbit_distance(
     }
 
 
+@router.get("/distance/history/cached")
+def fitbit_distance_history_cached(
+    access_token: str,
+    start: str = Query(..., description="YYYY-MM-DD"),
+    end: str = Query(..., description="YYYY-MM-DD"),
+    db: Session = Depends(get_db)
+):
+    """
+    Return Fitbit distance data from cache (database) for a date range.
+    Returns 404 if no cached data is found for the date range.
+    This endpoint does NOT make API calls - it only returns already-cached data.
+    """
+    try:
+        # Resolve user from access token
+        user, _ = _resolve_user_and_tz(db, access_token)
+        
+        # Convert dates to datetime.date objects
+        try:
+            start_date = datetime.strptime(start, "%Y-%m-%d").date()
+            end_date = datetime.strptime(end, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+        
+        # Query existing data from database
+        db_data = get_distance_by_date_range(
+            db,
+            user_id=user.id,
+            provider="fitbit",
+            start_date=start_date,
+            end_date=end_date
+        )
+        
+        if not db_data:
+            raise HTTPException(status_code=404, detail="No cached distance data found for this date range")
+        
+        # Format the response
+        items = [
+            {
+                "date": reading.date_local.isoformat(),
+                "distance_km": reading.distance_km
+            }
+            for reading in sorted(db_data, key=lambda x: x.date_local)
+        ]
+        
+        if not items:
+            raise HTTPException(status_code=404, detail="No cached distance data with valid values found for this date range")
+        
+        return {
+            "start": start,
+            "end": end,
+            "items": items,
+            "fromCache": True
+        }
+        
+    except HTTPException:
+        raise
+
+
 @router.get("/calories/today")
 def fitbit_calories_today(
     access_token: str,
@@ -713,6 +913,65 @@ def fitbit_calories_today(
         "activity_calories": activity_calories,
         "bmr_calories": bmr_calories
     }
+
+
+@router.get("/calories/history/cached")
+def fitbit_calories_history_cached(
+    access_token: str,
+    start: str = Query(..., description="YYYY-MM-DD"),
+    end: str = Query(..., description="YYYY-MM-DD"),
+    db: Session = Depends(get_db)
+):
+    """
+    Return Fitbit calories data from cache (database) for a date range.
+    Returns 404 if no cached data is found for the date range.
+    This endpoint does NOT make API calls - it only returns already-cached data.
+    """
+    try:
+        # Resolve user from access token
+        user, _ = _resolve_user_and_tz(db, access_token)
+        
+        # Convert dates to datetime.date objects
+        try:
+            start_date = datetime.strptime(start, "%Y-%m-%d").date()
+            end_date = datetime.strptime(end, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+        
+        # Query existing data from database
+        db_data = calories_crud.get_calories_by_date_range(
+            db,
+            user_id=user.id,
+            provider="fitbit",
+            start_date=start_date,
+            end_date=end_date
+        )
+        
+        if not db_data:
+            raise HTTPException(status_code=404, detail="No cached calories data found for this date range")
+        
+        # Format the response
+        items = [
+            {
+                "date": item.date_local.isoformat(),
+                "calories_out": item.calories_out,
+                "activity_calories": item.activity_calories,
+                "bmr_calories": item.bmr_calories
+            }
+            for item in sorted(db_data, key=lambda x: x.date_local)
+        ]
+        
+        return {
+            "start": start,
+            "end": end,
+            "items": items,
+            "fromCache": True
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch cached calories data: {str(e)}")
 
 
 @router.get("/spo2-nightly")
@@ -931,6 +1190,64 @@ def fitbit_hrv(access_token: str,
     return {"start": start, "end": end, "items": out, "raw": j}
 
 
+@router.get("/hrv/history/cached")
+def fitbit_hrv_history_cached(
+    access_token: str,
+    start: str = Query(..., description="YYYY-MM-DD"),
+    end: str = Query(..., description="YYYY-MM-DD"),
+    db: Session = Depends(get_db)
+):
+    """
+    Return Fitbit HRV data from cache (database) for a date range.
+    Returns 404 if no cached data is found for the date range.
+    This endpoint does NOT make API calls - it only returns already-cached data.
+    """
+    try:
+        # Resolve user from access token
+        user, _ = _resolve_user_and_tz(db, access_token)
+        
+        # Convert dates to datetime.date objects
+        try:
+            start_date = datetime.strptime(start, "%Y-%m-%d").date()
+            end_date = datetime.strptime(end, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+        
+        # Query existing data from database
+        db_data = hrv_crud.get_hrv_daily_by_date_range(
+            db,
+            user_id=user.id,
+            provider="fitbit",
+            start_date=start_date,
+            end_date=end_date
+        )
+        
+        if not db_data:
+            raise HTTPException(status_code=404, detail="No cached HRV data found for this date range")
+        
+        # Format the response
+        items = [
+            {
+                "date": reading.date_local.isoformat(),
+                "rmssd_ms": reading.rmssd_ms
+            }
+            for reading in sorted(db_data, key=lambda x: x.date_local)
+        ]
+        
+        if not items:
+            raise HTTPException(status_code=404, detail="No cached HRV data with valid values found for this date range")
+        
+        return {
+            "start": start,
+            "end": end,
+            "items": items,
+            "fromCache": True
+        }
+        
+    except HTTPException:
+        raise
+
+
 @router.get("/respiratory-rate")
 def fitbit_breathing_rate(access_token: str,
                           start: str = Query(..., description="YYYY-MM-DD"),
@@ -949,6 +1266,67 @@ def fitbit_breathing_rate(access_token: str,
             "light_sleep_avg": None,
             "rem_sleep_avg": None} for i in items]
     return {"start": start, "end": end, "items": out, "raw": j}
+
+
+@router.get("/respiratory-rate/history/cached")
+def fitbit_breathing_rate_history_cached(
+    access_token: str,
+    start: str = Query(..., description="YYYY-MM-DD"),
+    end: str = Query(..., description="YYYY-MM-DD"),
+    db: Session = Depends(get_db)
+):
+    """
+    Return Fitbit breathing rate data from cache (database) for a date range.
+    Returns 404 if no cached data is found for the date range.
+    This endpoint does NOT make API calls - it only returns already-cached data.
+    """
+    try:
+        # Resolve user from access token
+        user, _ = _resolve_user_and_tz(db, access_token)
+        
+        # Convert dates to datetime.date objects
+        try:
+            start_date = datetime.strptime(start, "%Y-%m-%d").date()
+            end_date = datetime.strptime(end, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+        
+        # Query existing data from database
+        db_data = breathing_rate_crud.get_breathing_rate_daily_by_date_range(
+            db,
+            user_id=user.id,
+            provider="fitbit",
+            start_date=start_date,
+            end_date=end_date
+        )
+        
+        if not db_data:
+            raise HTTPException(status_code=404, detail="No cached breathing rate data found for this date range")
+        
+        # Format the response
+        items = [
+            {
+                "date": reading.date_local.isoformat(),
+                "full_day_avg": reading.full_day_avg,
+                "deep_sleep_avg": reading.deep_sleep_avg,
+                "light_sleep_avg": reading.light_sleep_avg,
+                "rem_sleep_avg": reading.rem_sleep_avg
+            }
+            for reading in sorted(db_data, key=lambda x: x.date_local)
+        ]
+        
+        if not items:
+            raise HTTPException(status_code=404, detail="No cached breathing rate data with valid values found for this date range")
+        
+        return {
+            "start": start,
+            "end": end,
+            "items": items,
+            "fromCache": True
+        }
+        
+    except HTTPException:
+        raise
 
 
 @router.get("/respiratory-rate/today")
@@ -1152,6 +1530,76 @@ def fitbit_temperature_today(
     }
 
 
+@router.get("/temperature/history/cached")
+def fitbit_temperature_history_cached(
+    access_token: str,
+    start: str = Query(..., description="YYYY-MM-DD"),
+    end: str = Query(..., description="YYYY-MM-DD"),
+    db: Session = Depends(get_db)
+):
+    """
+    Return Fitbit temperature data from cache (database) for a date range.
+    Returns 404 if no cached data is found for the date range.
+    This endpoint does NOT make API calls - it only returns already-cached data.
+    """
+    try:
+        # Resolve user from access token
+        user, _ = _resolve_user_and_tz(db, access_token)
+        
+        # Convert dates to datetime.date objects
+        try:
+            start_date = datetime.strptime(start, "%Y-%m-%d").date()
+            end_date = datetime.strptime(end, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+        
+        # Query existing data from database
+        db_data = get_temperature_by_date_range(
+            db,
+            user_id=user.id,
+            provider="fitbit",
+            start_date=start_date,
+            end_date=end_date
+        )
+        
+        if not db_data:
+            raise HTTPException(status_code=404, detail="No cached temperature data found for this date range")
+        
+        # Format the response - group by local date, pick latest delta_c per date
+        from collections import defaultdict
+        by_date = defaultdict(lambda: {"delta_c": None, "ts": None})
+        
+        for reading in sorted(db_data, key=lambda x: x.measured_at_utc, reverse=True):
+            local_date = reading.measured_at_utc.isoformat()[:10]  # YYYY-MM-DD
+            if by_date[local_date]["delta_c"] is None and reading.delta_c is not None:
+                by_date[local_date]["delta_c"] = reading.delta_c
+                by_date[local_date]["ts"] = int(reading.measured_at_utc.timestamp())
+        
+        # Filter out empty entries and sort by date
+        items = [
+            {
+                "date": date_str,
+                "ts": data["ts"],
+                "delta_c": data["delta_c"]
+            }
+            for date_str, data in sorted(by_date.items())
+            if data["delta_c"] is not None
+        ]
+        
+        if not items:
+            raise HTTPException(status_code=404, detail="No cached temperature data with valid values found for this date range")
+        
+        return {
+            "start": start,
+            "end": end,
+            "items": items,
+            "fromCache": True
+        }
+        
+    except HTTPException:
+        raise
+
+
 @router.get("/resting-hr/today")
 def fitbit_resting_hr_today(
     access_token: str,
@@ -1206,6 +1654,65 @@ def fitbit_resting_hr_today(
         "resting_hr": resting_hr,
         "saved": resting_hr is not None
     }
+
+
+@router.get("/resting-hr/daily/cached")
+def fitbit_resting_hr_daily_cached(
+    access_token: str,
+    start: str = Query(..., description="YYYY-MM-DD"),
+    end: str = Query(..., description="YYYY-MM-DD"),
+    db: Session = Depends(get_db)
+):
+    """
+    Return Fitbit resting heart rate data from cache (database) for a date range.
+    Returns 404 if no cached data is found for the date range.
+    This endpoint does NOT make API calls - it only returns already-cached data.
+    """
+    try:
+        # Resolve user from access token
+        user, _ = _resolve_user_and_tz(db, access_token)
+        
+        # Convert dates to datetime.date objects
+        try:
+            start_date = datetime.strptime(start, "%Y-%m-%d").date()
+            end_date = datetime.strptime(end, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+        
+        # Query existing data from database
+        db_data = heart_rate_crud.get_heart_rate_daily_by_date_range(
+            db,
+            user_id=user.id,
+            provider="fitbit",
+            start_date=start_date,
+            end_date=end_date
+        )
+        
+        if not db_data:
+            raise HTTPException(status_code=404, detail="No cached resting heart rate data found for this date range")
+        
+        # Format the response
+        items = [
+            {
+                "date": item.date_local.isoformat(),
+                "resting_hr": item.avg_bpm,
+                "min_bpm": item.min_bpm,
+                "max_bpm": item.max_bpm
+            }
+            for item in sorted(db_data, key=lambda x: x.date_local)
+        ]
+        
+        return {
+            "start": start,
+            "end": end,
+            "items": items,
+            "fromCache": True
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch cached resting heart rate data: {str(e)}")
 
 
 @router.get("/hrv/today")

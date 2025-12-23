@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowLeft, RefreshCw, Flame } from "lucide-react";
 
-import { metrics } from "@/lib/api";
+import { metrics, fitbitCaloriesHistoryCached } from "@/lib/api";
 import { tokens } from "@/lib/storage";
 import { useAuth } from "@/context/AuthContext";
 
@@ -96,7 +96,24 @@ export default function CaloriesPage() {
       const token = await getAccessToken();
       if (!token) throw new Error("Not authenticated");
 
-      const data = await metrics.caloriesHistory(token, startYmd, endYmd);
+      // --- Try cache first ---
+      let data = null;
+      try {
+        const cached = await fitbitCaloriesHistoryCached(
+          token,
+          startYmd,
+          endYmd
+        );
+        if (cached?.items) {
+          data = cached;
+          console.log("Using cached Fitbit calories data");
+        }
+      } catch (cacheErr) {
+        // Cache miss or error, fall back to live API
+        console.log("Cache miss, fetching from live API:", cacheErr);
+        data = await metrics.caloriesHistory(token, startYmd, endYmd);
+      }
+
       if (!data?.items?.length) {
         setSeries([]);
         setTotalCaloriesOut(0);
@@ -139,14 +156,16 @@ export default function CaloriesPage() {
       );
       setTotalActivityCalories(Math.round(totals.totalActivity));
 
-      // Persist each reading in background (silent fail)
-      filtered.forEach((it) => {
-        try {
-          metrics.calories(token, it.date);
-        } catch (e) {
-          console.warn(`Failed to persist calories for ${it.date}:`, e);
-        }
-      });
+      // Persist each reading in background (only if not from cache)
+      if (!(data as any).fromCache) {
+        filtered.forEach((it) => {
+          try {
+            metrics.calories(token, it.date);
+          } catch (e) {
+            console.warn(`Failed to persist calories for ${it.date}:`, e);
+          }
+        });
+      }
     } catch (e: any) {
       setError(e?.message || "Failed to load calories");
       setSeries([]);
