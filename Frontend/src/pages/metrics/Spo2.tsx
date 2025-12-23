@@ -85,21 +85,37 @@ export default function Spo2Page() {
       const byTs = new Map<number, number>(); // ts -> percent
 
       if (detectedProvider === "fitbit") {
-        // --- Fitbit: fetch date range directly and persist ---
-        const fitbitData = await fitbitSpo2History(token, startYmd, endYmd);
+        // --- Fitbit: try cache first ---
+        let fitbitData = null;
+        try {
+          const cached = await fitbitSpo2HistoryCached(token, startYmd, endYmd);
+          if (cached?.items) {
+            fitbitData = cached;
+            console.log("Using cached Fitbit SpO2 data");
+          }
+        } catch (cacheErr) {
+          // Cache miss or error, fall back to live API
+          console.log("Cache miss, fetching from live API:", cacheErr);
+          fitbitData = await fitbitSpo2History(token, startYmd, endYmd);
+        }
+
         if (fitbitData?.items && Array.isArray(fitbitData.items)) {
-          // Also persist each data point (silent fail if it fails)
+          // Process each data point
           for (const it of fitbitData.items) {
             byTs.set(it.ts, it.percent);
-            // Persist the reading silently in background
-            try {
-              const dateStr = new Date(it.ts * 1000)
-                .toISOString()
-                .split("T")[0];
-              await metrics.spo2NightlyToday(token, dateStr);
-            } catch (e) {
-              console.warn(`Failed to persist SpO2 for timestamp ${it.ts}:`, e);
-              // Continue anyway, data is still displayed
+            // Persist the reading silently in background (only if not from cache)
+            if (!(fitbitData as any).fromCache) {
+              try {
+                const dateStr = new Date(it.ts * 1000)
+                  .toISOString()
+                  .split("T")[0];
+                await metrics.spo2NightlyToday(token, dateStr);
+              } catch (e) {
+                console.warn(
+                  `Failed to persist SpO2 for timestamp ${it.ts}:`,
+                  e
+                );
+              }
             }
           }
         }
