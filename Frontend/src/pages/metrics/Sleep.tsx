@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { ChevronLeft, RefreshCw, ChevronDown } from "lucide-react";
+import { ArrowLeft, RefreshCw } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { metrics, fitbitSleepHistoryCached } from "@/lib/api";
 import {
@@ -14,7 +14,7 @@ import {
 } from "recharts";
 
 // ---- helpers ----
-function fmt(n: number | null | undefined, digits = 0) {
+function fmt(n: number | null | undefined, digits = 1) {
   if (n === null || n === undefined || Number.isNaN(n)) return "–";
   return n.toFixed(digits);
 }
@@ -27,6 +27,24 @@ function ymdLocal(d: Date) {
   return `${y}-${m}-${day}`;
 }
 
+function StatCard({
+  title,
+  value,
+  subtitle,
+}: {
+  title: string;
+  value: string | number;
+  subtitle?: string;
+}) {
+  return (
+    <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+      <div className="text-sm text-zinc-400">{title}</div>
+      <div className="mt-1 text-2xl font-semibold text-zinc-100">{value}</div>
+      {subtitle && <div className="text-xs text-zinc-500 mt-1">{subtitle}</div>}
+    </div>
+  );
+}
+
 type Preset = 7 | 14 | 30;
 
 export default function SleepPage() {
@@ -34,7 +52,6 @@ export default function SleepPage() {
   const [preset, setPreset] = useState<Preset>(14);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [dropdownOpen, setDropdownOpen] = useState(false);
 
   const [latest, setLatest] = useState<number | null>(null);
   const [items, setItems] = useState<
@@ -149,60 +166,38 @@ export default function SleepPage() {
   }, [items]);
 
   return (
-    <div className="min-h-screen bg-slate-900 p-6">
-      <div className="max-w-7xl mx-auto">
+    <div className="min-h-screen bg-zinc-950 p-6">
+      <div className="max-w-5xl mx-auto">
         {/* Header */}
-        <div className="flex items-center justify-between mb-8">
-          <div className="flex items-center gap-4">
-            <Link
-              to="/dashboard"
-              className="inline-flex items-center justify-center w-10 h-10 rounded-full hover:bg-slate-800 transition"
-            >
-              <ChevronLeft className="w-5 h-5 text-slate-400" />
-            </Link>
-            <div>
-              <h1 className="text-4xl font-bold text-white">Sleep</h1>
-              <p className="text-sm text-slate-400 mt-1">{label}</p>
+        <div className="mb-8 flex items-start justify-between">
+          <div>
+            <div className="flex items-center gap-3">
+              <Link
+                to="/dashboard"
+                className="inline-flex items-center justify-center rounded-lg hover:bg-zinc-900 transition p-2"
+              >
+                <ArrowLeft className="w-4 h-4 text-zinc-400" />
+              </Link>
+              <h1 className="text-2xl font-semibold text-zinc-100">Sleep</h1>
             </div>
+            <p className="text-xs text-zinc-500 mt-2">{label}</p>
           </div>
 
-          {/* Date Filter Dropdown */}
-          <div className="relative">
-            <button
-              onClick={() => setDropdownOpen(!dropdownOpen)}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-800 text-slate-200 hover:bg-slate-700 transition border border-slate-700"
-            >
-              Last {preset} days
-              <ChevronDown className="w-4 h-4" />
-            </button>
-            {dropdownOpen && (
-              <div className="absolute right-0 mt-2 w-40 bg-slate-800 border border-slate-700 rounded-lg shadow-lg z-10">
-                {[7, 14, 30].map((p) => (
-                  <button
-                    key={p}
-                    onClick={() => {
-                      setPreset(p as Preset);
-                      setDropdownOpen(false);
-                    }}
-                    className={`w-full text-left px-4 py-2 text-sm transition ${
-                      preset === p
-                        ? "bg-blue-600 text-white"
-                        : "text-slate-300 hover:bg-slate-700"
-                    } ${p === 7 ? "rounded-t-lg" : ""} ${
-                      p === 30 ? "rounded-b-lg" : ""
-                    }`}
-                  >
-                    Last {p} days
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+          {/* Date Filter */}
+          <select
+            value={preset}
+            onChange={(e) => setPreset(Number(e.target.value) as Preset)}
+            className="rounded-lg bg-zinc-900 border border-zinc-800 px-3 py-2 text-sm text-zinc-100 hover:border-zinc-700 transition cursor-pointer"
+          >
+            <option value={7}>Last 7 days</option>
+            <option value={14}>Last 14 days</option>
+            <option value={30}>Last 30 days</option>
+          </select>
         </div>
 
         {/* Error Message */}
         {error && (
-          <div className="mb-6 p-4 bg-red-900/30 border border-red-700 rounded-lg text-red-300 text-sm">
+          <div className="mb-6 p-4 bg-red-900/20 border border-red-900/50 rounded-lg text-red-300 text-sm">
             {error}
           </div>
         )}
@@ -210,80 +205,72 @@ export default function SleepPage() {
         {/* Loading State */}
         {loading && (
           <div className="text-center py-12">
-            <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500" />
-            <p className="mt-2 text-slate-400">Loading sleep data...</p>
+            <div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-zinc-400" />
+            <p className="mt-2 text-sm text-zinc-500">Loading sleep data...</p>
           </div>
         )}
 
         {/* Stats Cards */}
         {!loading && (
           <>
-            <div className="grid grid-cols-3 gap-4 mb-6">
-              {/* Latest */}
-              <div className="bg-slate-800 rounded-lg p-6 border border-slate-700">
-                <p className="text-sm text-slate-400 mb-2">Latest</p>
-                <p className="text-4xl font-bold text-white">
-                  {fmt(latest, 1)}
-                </p>
-                <p className="text-xs text-slate-500 mt-2">hours</p>
-              </div>
-
-              {/* Average */}
-              <div className="bg-slate-800 rounded-lg p-6 border border-slate-700">
-                <p className="text-sm text-slate-400 mb-2">Average</p>
-                <p className="text-4xl font-bold text-white">{fmt(avg, 1)}</p>
-                <p className="text-xs text-slate-500 mt-2">hours</p>
-              </div>
-
-              {/* Range */}
-              <div className="bg-slate-800 rounded-lg p-6 border border-slate-700">
-                <p className="text-sm text-slate-400 mb-2">Range</p>
-                <p className="text-4xl font-bold text-white">
-                  {fmt(minMax.min, 1)} – {fmt(minMax.max, 1)}
-                </p>
-                <p className="text-xs text-slate-500 mt-2">hours</p>
-              </div>
+            <div className="grid grid-cols-3 gap-3 mb-6">
+              <StatCard
+                title="Latest"
+                value={`${fmt(latest, 1)} h`}
+                subtitle="hours"
+              />
+              <StatCard
+                title="Average"
+                value={`${fmt(avg, 1)} h`}
+                subtitle="hours"
+              />
+              <StatCard
+                title="Range"
+                value={`${fmt(minMax.min, 1)} – ${fmt(minMax.max, 1)} h`}
+                subtitle="hours"
+              />
             </div>
 
             {/* Chart */}
             {chartData.length > 0 && (
-              <div className="bg-slate-800 rounded-lg p-6 border border-slate-700 mb-6">
-                <h2 className="text-lg font-semibold text-white mb-4">
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 mb-6">
+                <h2 className="text-sm font-medium text-zinc-100 mb-4">
                   Sleep Over Time
                 </h2>
-                <ResponsiveContainer width="100%" height={300}>
+                <ResponsiveContainer width="100%" height={250}>
                   <LineChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                    <CartesianGrid strokeDasharray="3 3" stroke="#3f3f46" />
                     <XAxis
                       dataKey="date"
-                      stroke="#94a3b8"
-                      style={{ fontSize: "12px" }}
+                      stroke="#71717a"
+                      style={{ fontSize: "11px" }}
                     />
                     <YAxis
-                      stroke="#94a3b8"
-                      style={{ fontSize: "12px" }}
+                      stroke="#71717a"
+                      style={{ fontSize: "11px" }}
                       label={{
                         value: "Hours",
                         angle: -90,
                         position: "insideLeft",
-                        fill: "#94a3b8",
+                        fill: "#71717a",
+                        fontSize: 11,
                       }}
                     />
                     <Tooltip
                       contentStyle={{
-                        backgroundColor: "#1e293b",
-                        border: "1px solid #475569",
+                        backgroundColor: "#18181b",
+                        border: "1px solid #3f3f46",
                         borderRadius: "6px",
-                        color: "#e2e8f0",
+                        color: "#e4e4e7",
                       }}
                       formatter={(value: any) => [fmt(value, 1), "hours"]}
                     />
                     <Line
                       type="monotone"
                       dataKey="hoursAsleep"
-                      stroke="#3b82f6"
+                      stroke="#a1a1aa"
                       strokeWidth={2}
-                      dot={{ r: 4, fill: "#3b82f6" }}
+                      dot={{ r: 3, fill: "#a1a1aa" }}
                       name="Total Sleep"
                     />
                   </LineChart>
@@ -293,36 +280,33 @@ export default function SleepPage() {
 
             {/* Data Table */}
             {items.length > 0 && (
-              <div className="bg-slate-800 rounded-lg border border-slate-700 overflow-hidden">
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 overflow-hidden">
                 <div className="overflow-x-auto">
-                  <table className="w-full">
+                  <table className="w-full text-sm">
                     <thead>
-                      <tr className="bg-slate-900 border-b border-slate-700">
-                        <th className="px-6 py-3 text-left text-sm font-semibold text-slate-300">
+                      <tr className="border-b border-zinc-800 bg-zinc-900/80">
+                        <th className="px-4 py-3 text-left font-medium text-zinc-400">
                           Date
                         </th>
-                        <th className="px-6 py-3 text-left text-sm font-semibold text-slate-300">
+                        <th className="px-4 py-3 text-left font-medium text-zinc-400">
                           Total Sleep
                         </th>
-                        <th className="px-6 py-3 text-left text-sm font-semibold text-slate-300">
+                        <th className="px-4 py-3 text-left font-medium text-zinc-400">
                           Main Sleep
                         </th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-700">
+                    <tbody className="divide-y divide-zinc-800">
                       {items.map((it, i) => (
-                        <tr
-                          key={i}
-                          className="hover:bg-slate-700/50 transition"
-                        >
-                          <td className="px-6 py-3 text-sm font-medium text-slate-200">
+                        <tr key={i} className="hover:bg-zinc-800/50 transition">
+                          <td className="px-4 py-3 font-medium text-zinc-300">
                             {it.date}
                           </td>
-                          <td className="px-6 py-3 text-sm text-slate-400">
-                            {fmt(it.hoursAsleep, 2)} h
+                          <td className="px-4 py-3 text-zinc-400">
+                            {fmt(it.hoursAsleep, 1)} h
                           </td>
-                          <td className="px-6 py-3 text-sm text-slate-400">
-                            {fmt(it.hoursAsleepMain, 2)} h
+                          <td className="px-4 py-3 text-zinc-400">
+                            {fmt(it.hoursAsleepMain, 1)} h
                           </td>
                         </tr>
                       ))}
