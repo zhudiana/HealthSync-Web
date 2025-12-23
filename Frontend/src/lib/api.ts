@@ -531,6 +531,195 @@ export const metrics = {
   },
 };
 
+// ---------- Fitbit Weight History & Latest ----------
+export async function fitbitWeightHistory(
+  accessToken: string,
+  dateFrom: string,
+  dateTo: string
+) {
+  const url = new URL(`${API_BASE_URL}/fitbit/metrics/weight`);
+  url.searchParams.set("access_token", accessToken);
+  url.searchParams.set("date", dateFrom);
+  url.searchParams.set("end", dateTo);
+
+  const res = await fetch(url.toString());
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "fitbit weight history failed");
+
+  return data as {
+    date: string;
+    weight: Array<{
+      date: string;
+      weight_kg: number;
+      fat_pct: number | null;
+      bmi: number | null;
+      logId: string;
+      source: string;
+    }>;
+  };
+}
+
+export async function fitbitWeightLatest(accessToken: string) {
+  const url = new URL(`${API_BASE_URL}/fitbit/metrics/weight`);
+  url.searchParams.set("access_token", accessToken);
+  url.searchParams.set("period", "1d");
+
+  const res = await fetch(url.toString());
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "fitbit weight latest failed");
+
+  // Get the latest item from the response
+  const items = data.weight || [];
+  const latest = items[items.length - 1] || null;
+
+  return latest as {
+    date: string;
+    weight_kg: number;
+    fat_pct: number | null;
+    bmi: number | null;
+    logId: string;
+    source: string;
+  } | null;
+}
+
+// ---------- Fitbit Distance History ----------
+export async function fitbitDistanceHistory(
+  accessToken: string,
+  dateFrom: string,
+  dateTo: string
+) {
+  const url = new URL(`${API_BASE_URL}/fitbit/metrics/distance`);
+  url.searchParams.set("access_token", accessToken);
+
+  // Fetch for each day in the range since Fitbit distance is daily
+  const points: Array<{ date: string; distance_km: number | null }> = [];
+  let currentDate = new Date(dateFrom);
+  const endDate = new Date(dateTo);
+
+  while (currentDate <= endDate) {
+    const dateStr = currentDate.toISOString().split("T")[0];
+    try {
+      const dayUrl = new URL(`${API_BASE_URL}/fitbit/metrics/distance`);
+      dayUrl.searchParams.set("access_token", accessToken);
+      dayUrl.searchParams.set("date", dateStr);
+
+      const res = await fetch(dayUrl.toString());
+      const data = await res.json();
+      if (res.ok) {
+        points.push({
+          date: data.date || dateStr,
+          distance_km: data.distance_km,
+        });
+      }
+    } catch (e) {
+      console.warn(`Failed to fetch distance for ${dateStr}:`, e);
+    }
+    currentDate.setDate(currentDate.getDate() + 1);
+  }
+
+  return {
+    start: dateFrom,
+    end: dateTo,
+    items: points,
+  };
+}
+
+// ---------- Fitbit Steps History ----------
+export async function fitbitStepsHistory(
+  accessToken: string,
+  dateFrom: string,
+  dateTo: string
+) {
+  const url = new URL(`${API_BASE_URL}/fitbit/metrics/steps`);
+  url.searchParams.set("access_token", accessToken);
+  url.searchParams.set("start_date", dateFrom);
+  url.searchParams.set("end_date", dateTo);
+
+  const res = await fetch(url.toString());
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "fitbit steps history failed");
+
+  return data as {
+    start: string;
+    end: string;
+    items: Array<{
+      date: string;
+      steps: number | null;
+      active_minutes: number | null;
+      calories: number | null;
+    }>;
+  };
+}
+
+export async function fitbitStepsHistoryCached(
+  accessToken: string,
+  dateFrom: string,
+  dateTo: string
+) {
+  const url = new URL(`${API_BASE_URL}/fitbit/metrics/steps/history/cached`);
+  url.searchParams.set("access_token", accessToken);
+  url.searchParams.set("start", dateFrom);
+  url.searchParams.set("end", dateTo);
+
+  const res = await fetch(url.toString());
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.detail || "fitbit steps cached failed");
+
+  return data as {
+    start: string;
+    end: string;
+    items: Array<{
+      date: string;
+      steps: number | null;
+      active_minutes: number | null;
+      calories: number | null;
+    }>;
+    fromCache: boolean;
+  };
+}
+
+// ---------- Fitbit SpO2 History ----------
+export async function fitbitSpo2History(
+  accessToken: string,
+  dateFrom: string,
+  dateTo: string
+) {
+  const points: Array<{ ts: number; percent: number }> = [];
+  let currentDate = new Date(dateFrom);
+  const endDate = new Date(dateTo);
+
+  while (currentDate <= endDate) {
+    const dateStr = currentDate.toISOString().split("T")[0];
+    try {
+      const url = new URL(`${API_BASE_URL}/fitbit/metrics/spo2-nightly`);
+      url.searchParams.set("access_token", accessToken);
+      url.searchParams.set("date", dateStr);
+
+      const res = await fetch(url.toString());
+      const data = await res.json();
+      if (res.ok && data.average != null) {
+        // Convert date string to timestamp at midnight UTC
+        const ts = Math.floor(
+          new Date(dateStr + "T00:00:00Z").getTime() / 1000
+        );
+        points.push({
+          ts,
+          percent: data.average,
+        });
+      }
+    } catch (e) {
+      console.warn(`Failed to fetch SpO2 for ${dateStr}:`, e);
+    }
+    currentDate.setDate(currentDate.getDate() + 1);
+  }
+
+  return {
+    start: dateFrom,
+    end: dateTo,
+    items: points,
+  };
+}
+
 // ----------------------------------------------------------
 // ---------- Withings ----------
 export async function getWithingsAuthUrl(scope: string) {
@@ -956,166 +1145,4 @@ export async function withingsTemperatureDaily(
     date: string;
     items: { ts: number; body_c: number }[];
   }>;
-}
-
-// ---------- Fitbit Weight History & Latest ----------
-export async function fitbitWeightHistory(
-  accessToken: string,
-  dateFrom: string,
-  dateTo: string
-) {
-  const url = new URL(`${API_BASE_URL}/fitbit/metrics/weight`);
-  url.searchParams.set("access_token", accessToken);
-  url.searchParams.set("date", dateFrom);
-  url.searchParams.set("end", dateTo);
-
-  const res = await fetch(url.toString());
-  const data = await res.json();
-  if (!res.ok) throw new Error(data?.detail || "fitbit weight history failed");
-
-  return data as {
-    date: string;
-    weight: Array<{
-      date: string;
-      weight_kg: number;
-      fat_pct: number | null;
-      bmi: number | null;
-      logId: string;
-      source: string;
-    }>;
-  };
-}
-
-export async function fitbitWeightLatest(accessToken: string) {
-  const url = new URL(`${API_BASE_URL}/fitbit/metrics/weight`);
-  url.searchParams.set("access_token", accessToken);
-  url.searchParams.set("period", "1d");
-
-  const res = await fetch(url.toString());
-  const data = await res.json();
-  if (!res.ok) throw new Error(data?.detail || "fitbit weight latest failed");
-
-  // Get the latest item from the response
-  const items = data.weight || [];
-  const latest = items[items.length - 1] || null;
-
-  return latest as {
-    date: string;
-    weight_kg: number;
-    fat_pct: number | null;
-    bmi: number | null;
-    logId: string;
-    source: string;
-  } | null;
-}
-
-// ---------- Fitbit Distance History ----------
-export async function fitbitDistanceHistory(
-  accessToken: string,
-  dateFrom: string,
-  dateTo: string
-) {
-  const url = new URL(`${API_BASE_URL}/fitbit/metrics/distance`);
-  url.searchParams.set("access_token", accessToken);
-
-  // Fetch for each day in the range since Fitbit distance is daily
-  const points: Array<{ date: string; distance_km: number | null }> = [];
-  let currentDate = new Date(dateFrom);
-  const endDate = new Date(dateTo);
-
-  while (currentDate <= endDate) {
-    const dateStr = currentDate.toISOString().split("T")[0];
-    try {
-      const dayUrl = new URL(`${API_BASE_URL}/fitbit/metrics/distance`);
-      dayUrl.searchParams.set("access_token", accessToken);
-      dayUrl.searchParams.set("date", dateStr);
-
-      const res = await fetch(dayUrl.toString());
-      const data = await res.json();
-      if (res.ok) {
-        points.push({
-          date: data.date || dateStr,
-          distance_km: data.distance_km,
-        });
-      }
-    } catch (e) {
-      console.warn(`Failed to fetch distance for ${dateStr}:`, e);
-    }
-    currentDate.setDate(currentDate.getDate() + 1);
-  }
-
-  return {
-    start: dateFrom,
-    end: dateTo,
-    items: points,
-  };
-}
-
-// ---------- Fitbit Steps History ----------
-export async function fitbitStepsHistory(
-  accessToken: string,
-  dateFrom: string,
-  dateTo: string
-) {
-  const url = new URL(`${API_BASE_URL}/fitbit/metrics/steps`);
-  url.searchParams.set("access_token", accessToken);
-  url.searchParams.set("start_date", dateFrom);
-  url.searchParams.set("end_date", dateTo);
-
-  const res = await fetch(url.toString());
-  const data = await res.json();
-  if (!res.ok) throw new Error(data?.detail || "fitbit steps history failed");
-
-  return data as {
-    start: string;
-    end: string;
-    items: Array<{
-      date: string;
-      steps: number | null;
-      active_minutes: number | null;
-      calories: number | null;
-    }>;
-  };
-}
-
-// ---------- Fitbit SpO2 History ----------
-export async function fitbitSpo2History(
-  accessToken: string,
-  dateFrom: string,
-  dateTo: string
-) {
-  const points: Array<{ ts: number; percent: number }> = [];
-  let currentDate = new Date(dateFrom);
-  const endDate = new Date(dateTo);
-
-  while (currentDate <= endDate) {
-    const dateStr = currentDate.toISOString().split("T")[0];
-    try {
-      const url = new URL(`${API_BASE_URL}/fitbit/metrics/spo2-nightly`);
-      url.searchParams.set("access_token", accessToken);
-      url.searchParams.set("date", dateStr);
-
-      const res = await fetch(url.toString());
-      const data = await res.json();
-      if (res.ok && data.average != null) {
-        // Convert date string to timestamp at midnight UTC
-        const ts = Math.floor(
-          new Date(dateStr + "T00:00:00Z").getTime() / 1000
-        );
-        points.push({
-          ts,
-          percent: data.average,
-        });
-      }
-    } catch (e) {
-      console.warn(`Failed to fetch SpO2 for ${dateStr}:`, e);
-    }
-    currentDate.setDate(currentDate.getDate() + 1);
-  }
-
-  return {
-    start: dateFrom,
-    end: dateTo,
-    items: points,
-  };
 }

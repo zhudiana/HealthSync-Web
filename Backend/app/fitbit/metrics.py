@@ -65,8 +65,6 @@ def _resolve_user_and_tz(db: Session, access_token: str) -> tuple[User, str]:
     return user, (acc.timezone or "UTC")
 
 
-
-
 @router.get("/summary")
 def daily_summary(access_token: str, date: str = Query(default=None, description="YYYY-MM-DD"), db: Session = Depends(get_db)):
     d = date or _user_local_today(access_token)
@@ -204,6 +202,65 @@ def fitbit_steps(
         "end": end_date,
         "items": items
     }
+
+
+@router.get("/steps/history/cached")
+def fitbit_steps_history_cached(
+    access_token: str,
+    start: str = Query(..., description="YYYY-MM-DD"),
+    end: str = Query(..., description="YYYY-MM-DD"),
+    db: Session = Depends(get_db)
+):
+    """
+    Return Fitbit steps data from cache (database) for a date range.
+    Returns 404 if no cached data is found for the date range.
+    This endpoint does NOT make API calls - it only returns already-cached data.
+    """
+    try:
+        # Resolve user from access token
+        user, _ = _resolve_user_and_tz(db, access_token)
+        
+        # Convert dates to datetime.date objects
+        try:
+            start_date = datetime.strptime(start, "%Y-%m-%d").date()
+            end_date = datetime.strptime(end, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+        
+        # Query existing data from database
+        db_data = steps_crud.get_steps_by_date_range(
+            db,
+            user_id=user.id,
+            provider="fitbit",
+            start_date=start_date,
+            end_date=end_date
+        )
+        
+        if not db_data:
+            raise HTTPException(status_code=404, detail="No cached steps data found for this date range")
+        
+        # Format the response
+        items = [
+            {
+                "date": item.date_local.isoformat(),
+                "steps": item.steps,
+                "active_minutes": item.active_min,
+                "calories": item.calories
+            }
+            for item in sorted(db_data, key=lambda x: x.date_local)
+        ]
+        
+        return {
+            "start": start,
+            "end": end,
+            "items": items,
+            "fromCache": True
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch cached steps data: {str(e)}")
 
 
 @router.get("/resting-hr")

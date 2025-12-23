@@ -7,6 +7,7 @@ import {
   withingsStepsDaily,
   metrics as fitbitMetrics,
   fitbitStepsHistory,
+  fitbitStepsHistoryCached,
 } from "@/lib/api";
 import { tokens } from "@/lib/storage";
 import { useAuth } from "@/context/AuthContext";
@@ -126,11 +127,30 @@ export default function StepsPage() {
             startYmd,
             endYmd,
           });
-          const data = await fitbitStepsHistory(accessToken, startYmd, endYmd);
-          console.log("Fitbit steps API response:", {
+
+          // --- Fitbit: try cache first ---
+          let data = null;
+          try {
+            const cached = await fitbitStepsHistoryCached(
+              accessToken,
+              startYmd,
+              endYmd
+            );
+            if (cached?.items) {
+              data = cached;
+              console.log("Using cached Fitbit steps data");
+            }
+          } catch (cacheErr) {
+            // Cache miss or error, fall back to live API
+            console.log("Cache miss, fetching from live API:", cacheErr);
+            data = await fitbitStepsHistory(accessToken, startYmd, endYmd);
+          }
+
+          console.log("Fitbit steps response:", {
             start: data.start,
             end: data.end,
             itemCount: data.items.length,
+            fromCache: (data as any).fromCache || false,
             items: data.items.map((item) => ({
               date: item.date,
               steps: item.steps,
@@ -138,7 +158,7 @@ export default function StepsPage() {
           });
 
           if (!data.items?.length) {
-            console.warn("No step data received from API");
+            console.warn("No step data received");
           }
 
           // Process each item from the response
@@ -149,17 +169,17 @@ export default function StepsPage() {
                 date: item.date,
                 steps: item.steps,
               });
-              // Persist the reading silently in background
-              try {
-                fitbitMetrics.steps(accessToken, item.date);
-              } catch (e) {
-                console.warn(`Failed to persist steps for ${item.date}:`, e);
-                // Continue anyway, data is still displayed
+              // Persist the reading silently in background (only if not from cache)
+              if (!(data as any).fromCache) {
+                try {
+                  fitbitMetrics.steps(accessToken, item.date);
+                } catch (e) {
+                  console.warn(`Failed to persist steps for ${item.date}:`, e);
+                }
               }
             }
           });
 
-          // Log the final processed data
           console.log("Processed steps data:", Array.from(dataMap.entries()));
         } catch (e) {
           console.warn("Failed to fetch Fitbit steps:", e);
