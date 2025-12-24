@@ -13,6 +13,7 @@ from app.db.crud import heart_rate as heart_rate_crud
 from app.db.crud import hrv as hrv_crud
 from app.db.crud import heart_rate_intraday as heart_rate_intraday_crud
 from app.db.crud import breathing_rate as breathing_rate_crud
+from app.db.crud import fitbit_current_hr as fitbit_current_hr_crud
 from app.db.crud.metrics import _upsert_spo2_reading, _upsert_temperature_reading, get_spo2_by_date_range, get_temperature_by_date_range, get_distance_by_date_range
 from app.dependencies import get_db
 
@@ -2055,6 +2056,22 @@ def persist_latest_heart_rate(access_token: str, db: Session = Depends(get_db)):
                 resolution=resolution,
                 samples=items
             )
+            
+            # Also save the latest HR reading for real-time alerting
+            latest_bpm = items[-1].get("bpm") if items else None
+            latest_ts = items[-1].get("ts") if items else None
+            
+            if latest_bpm is not None and latest_ts is not None:
+                # Convert unix timestamp to datetime
+                measured_at_utc = datetime.fromtimestamp(latest_ts, tz=timezone.utc)
+                
+                fitbit_current_hr_crud.update_or_create_current_heart_rate(
+                    db,
+                    user_id=user.id,
+                    current_bpm=latest_bpm,
+                    measured_at_utc=measured_at_utc
+                )
+            
             db.commit()
             
             return {
@@ -2064,7 +2081,7 @@ def persist_latest_heart_rate(access_token: str, db: Session = Depends(get_db)):
                 "start_utc": start_at_utc.isoformat(),
                 "end_utc": end_at_utc.isoformat(),
                 "resolution": resolution,
-                "latest_bpm": items[-1].get("bpm") if items else None
+                "latest_bpm": latest_bpm
             }
         except Exception as e:
             db.rollback()

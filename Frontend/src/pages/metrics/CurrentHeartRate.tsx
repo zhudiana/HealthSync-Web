@@ -2,8 +2,9 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowLeft, RefreshCw, Heart, TrendingUp } from "lucide-react";
-import { metrics } from "@/lib/api";
+import { metrics, getUserByAuth, updateUserByAuth } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
+import HrThresholdDialog from "@/components/HeartRateThresholdDialog";
 
 function StatCard({
   title,
@@ -48,6 +49,14 @@ export default function CurrentHeartRatePage() {
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [thresholds, setThresholds] = useState<{
+    low: number | null;
+    high: number | null;
+  }>({
+    low: null,
+    high: null,
+  });
 
   const [heartRateData, setHeartRateData] = useState<{
     bpm: number | null;
@@ -119,6 +128,30 @@ export default function CurrentHeartRatePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoRefreshEnabled]);
 
+  // Load initial thresholds
+  useEffect(() => {
+    async function loadThresholds() {
+      try {
+        const authUserId = localStorage.getItem("authUserId");
+        if (!authUserId) return;
+
+        const user = await getUserByAuth(authUserId);
+        if (
+          user.hr_threshold_low !== undefined ||
+          user.hr_threshold_high !== undefined
+        ) {
+          setThresholds({
+            low: user.hr_threshold_low,
+            high: user.hr_threshold_high,
+          });
+        }
+      } catch (error) {
+        console.error("Failed to load thresholds:", error);
+      }
+    }
+    loadThresholds();
+  }, []);
+
   // Format cached_at timestamp
   const cachedAtTime = heartRateData.cached_at
     ? new Date(heartRateData.cached_at).toLocaleTimeString([], {
@@ -159,6 +192,14 @@ export default function CurrentHeartRatePage() {
               />
               Auto-refresh
             </label>
+
+            <button
+              onClick={() => setDialogOpen(true)}
+              className="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-md border border-zinc-700 hover:bg-zinc-800 text-zinc-200"
+            >
+              <Heart className="h-4 w-4" />
+              Adjust Threshold
+            </button>
 
             <button
               onClick={loadCurrentHeartRate}
@@ -287,9 +328,103 @@ export default function CurrentHeartRatePage() {
                   </p>
                 </div>
               )}
+
+              {/* Threshold alerts */}
+              {thresholds.high !== null &&
+                heartRateData.bpm > thresholds.high && (
+                  <div className="p-3 rounded-lg bg-red-950/60 border border-red-900/60 mt-4">
+                    <p className="text-sm text-red-300">
+                      <strong>⚠️ Alert:</strong> Your heart rate (
+                      {heartRateData.bpm} bpm) has exceeded your high threshold
+                      ({thresholds.high} bpm). An alert has been sent to your
+                      email.
+                    </p>
+                  </div>
+                )}
+              {thresholds.low !== null &&
+                heartRateData.bpm < thresholds.low && (
+                  <div className="p-3 rounded-lg bg-blue-950/60 border border-blue-900/60 mt-4">
+                    <p className="text-sm text-blue-300">
+                      <strong>ℹ️ Alert:</strong> Your heart rate (
+                      {heartRateData.bpm} bpm) has gone below your low threshold
+                      ({thresholds.low} bpm). An alert has been sent to your
+                      email.
+                    </p>
+                  </div>
+                )}
             </div>
           </div>
         )}
+
+        {/* Threshold display card */}
+        {(thresholds.low !== null || thresholds.high !== null) && (
+          <div className="rounded-lg border border-zinc-700 bg-zinc-900/40 p-6">
+            <h3 className="font-semibold text-zinc-200 mb-4">
+              Your Thresholds
+            </h3>
+            <div className="grid grid-cols-2 gap-4">
+              {thresholds.low !== null && (
+                <div className="rounded-lg bg-blue-950/30 border border-blue-900/40 p-4">
+                  <p className="text-xs text-blue-400 uppercase tracking-wide">
+                    Low Threshold
+                  </p>
+                  <p className="text-2xl font-semibold text-blue-200 mt-2">
+                    {thresholds.low}
+                  </p>
+                  <p className="text-xs text-blue-400 mt-1">bpm</p>
+                </div>
+              )}
+              {thresholds.high !== null && (
+                <div className="rounded-lg bg-red-950/30 border border-red-900/40 p-4">
+                  <p className="text-xs text-red-400 uppercase tracking-wide">
+                    High Threshold
+                  </p>
+                  <p className="text-2xl font-semibold text-red-200 mt-2">
+                    {thresholds.high}
+                  </p>
+                  <p className="text-xs text-red-400 mt-1">bpm</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Threshold Dialog */}
+        <HrThresholdDialog
+          open={dialogOpen}
+          onOpenChange={setDialogOpen}
+          initialLow={thresholds.low}
+          initialHigh={thresholds.high}
+          onSave={async ({ low, high }) => {
+            try {
+              const authUserId = localStorage.getItem("authUserId");
+              if (!authUserId) throw new Error("Not authenticated");
+
+              const response = await updateUserByAuth(authUserId, {
+                hr_threshold_low: low,
+                hr_threshold_high: high,
+              });
+
+              // Verify the response has the expected properties
+              if (
+                "hr_threshold_low" in response &&
+                "hr_threshold_high" in response
+              ) {
+                setThresholds({
+                  low: response.hr_threshold_low as number | null,
+                  high: response.hr_threshold_high as number | null,
+                });
+              } else {
+                console.warn("Response missing threshold values:", response);
+                // Fall back to the values we tried to save
+                setThresholds({ low, high });
+              }
+            } catch (error) {
+              console.error("Failed to save thresholds:", error);
+              throw error; // Re-throw to let the dialog handle the error
+            }
+          }}
+        />
       </main>
     </div>
   );
