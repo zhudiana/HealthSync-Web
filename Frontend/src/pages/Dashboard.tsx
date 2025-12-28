@@ -738,13 +738,13 @@ export default function Dashboard() {
     (async () => {
       if (!provider) return;
 
-      const access = await getAccessToken();
-      if (!access) return;
-
       if (provider === "fitbit") {
         // Refresh current HR every 2 minutes (respects Fitbit rate limits)
         const refreshFitbitHR = async () => {
           try {
+            const access = await getAccessToken();
+            if (!access) return;
+
             const hr = await fitbitMetrics.latestHeartRate(access);
             if (mounted) {
               setCurrentHR(hr.bpm ?? null);
@@ -769,6 +769,9 @@ export default function Dashboard() {
         // Refresh daily HR every 5 minutes
         const refreshWithingsHR = async () => {
           try {
+            const access = await getAccessToken();
+            if (!access) return;
+
             const todayStr = ymd();
             const daily = await withingsHeartRateDaily(access, todayStr);
             if (mounted) {
