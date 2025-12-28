@@ -730,6 +730,69 @@ export default function Dashboard() {
     };
   }, [provider, getAccessToken]);
 
+  // Selective smart refresh: HR metrics every few minutes
+  useEffect(() => {
+    let mounted = true;
+    let interval: NodeJS.Timeout | null = null;
+
+    (async () => {
+      if (!provider) return;
+
+      const access = await getAccessToken();
+      if (!access) return;
+
+      if (provider === "fitbit") {
+        // Refresh current HR every 2 minutes (respects Fitbit rate limits)
+        const refreshFitbitHR = async () => {
+          try {
+            const hr = await fitbitMetrics.latestHeartRate(access);
+            if (mounted) {
+              setCurrentHR(hr.bpm ?? null);
+              setCurrentHRAge(hr.age_seconds ?? null);
+            }
+
+            // Also persist the latest HR reading
+            try {
+              await fitbitMetrics.latestHeartRatePersist(access);
+            } catch {
+              // Silent fail
+            }
+          } catch (err) {
+            console.warn("Failed to refresh Fitbit current HR:", err);
+          }
+        };
+
+        // Initial refresh + set interval
+        refreshFitbitHR();
+        interval = setInterval(refreshFitbitHR, 2 * 60 * 1000); // 2 minutes
+      } else if (provider === "withings") {
+        // Refresh daily HR every 5 minutes
+        const refreshWithingsHR = async () => {
+          try {
+            const todayStr = ymd();
+            const daily = await withingsHeartRateDaily(access, todayStr);
+            if (mounted) {
+              setAvgHR(daily?.hr_average ?? null);
+              setMaxHR(daily?.hr_max ?? null);
+              setMinHR(daily?.hr_min ?? null);
+            }
+          } catch (err) {
+            console.warn("Failed to refresh Withings daily HR:", err);
+          }
+        };
+
+        // Initial refresh + set interval
+        refreshWithingsHR();
+        interval = setInterval(refreshWithingsHR, 5 * 60 * 1000); // 5 minutes
+      }
+    })();
+
+    return () => {
+      mounted = false;
+      if (interval) clearInterval(interval);
+    };
+  }, [provider, getAccessToken]);
+
   // ---------- render ----------
   const greetName =
     dbDisplayName?.trim() ||
