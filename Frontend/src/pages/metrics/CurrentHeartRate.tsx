@@ -122,7 +122,7 @@ export default function CurrentHeartRatePage() {
 
     const interval = setInterval(() => {
       loadCurrentHeartRate();
-    }, 60000); // 60 seconds
+    }, 300000); // 5 minutes
 
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
