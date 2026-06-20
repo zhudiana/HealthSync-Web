@@ -8,6 +8,28 @@ It includes:
 - A React + Vite frontend for authentication, dashboards, and metric visualization.
 - Background processing for heart-rate threshold checks and email alerts.
 
+## Screenshots
+
+These images are stored in the root [assets](assets) folder and render directly in the README.
+
+### Login and dashboard
+
+![Login page](assets/Login%20page.png)
+
+![Main dashboard](assets/main%20dashboard.png)
+
+### Health metrics
+
+![Heart rate page](assets/HR%20page.png)
+
+![Calories page](assets/calories%20page.png)
+
+### Alerts and settings
+
+![Heart rate threshold setter](assets/HR%20Threshold%20setter.png)
+
+![Alert email screenshot](assets/alert%20email%20screenshot.PNG)
+
 ## Project Layout
 
 ```
