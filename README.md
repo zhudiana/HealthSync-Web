@@ -1,6 +1,6 @@
 # HealthSync
 
-HealthSync is a full-stack health data dashboard that connects Fitbit and Withings accounts, syncs wellness metrics, stores normalized data, and shows trends in a React frontend.
+HealthSync is an AI-enabled digital health platform designed to collect, analyze, and visualize wearable health data to support personalized health monitoring and research.
 
 It includes:
 
